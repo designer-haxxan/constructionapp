@@ -1,0 +1,11 @@
+{
+  "name": "building-materials-ledger",
+  "version": "2.0.0",
+  "private": true,
+  "description": "Ledgers, bills, purchases and stock for a building-materials business. Static web app; the only build step is none.",
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/domain.test.mjs",
+    "serve": "python -m http.server 8080 --bind 127.0.0.1"
+  }
+}
