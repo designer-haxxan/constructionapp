@@ -54,23 +54,15 @@ export function modal({ title, body = '', footer = '', wide = false, onMount }) 
   let resolveClose;
   const closedP = new Promise((r) => { resolveClose = r; });
   const onKey = (e) => { if (e.key === 'Escape') close(null); };
+  // Entrance and exit use CSS animations only: nothing is left in an inline "hidden" state if a script stalls.
   const close = (value) => {
     if (closed) return; closed = true;
     document.removeEventListener('keydown', onKey);
-    let finished = false;
-    // Finish once: after the exit animation, or after a timeout if animation frames are not running.
-    const done = () => { if (finished) return; finished = true; el.remove(); resolveClose(value); };
-    if (gsapOk()) {
-      globalThis.gsap.to(el.querySelector('.modal'), { y: 14, opacity: 0, scale: 0.98, duration: 0.18, ease: 'power2.in', onComplete: done });
-      setTimeout(done, 320);
-    } else done();
+    el.classList.add('is-closing');
+    setTimeout(() => { el.remove(); resolveClose(value); }, 200);
   };
   el.addEventListener('click', (e) => { if (e.target === el || e.target.closest('[data-close]')) close(null); });
   document.addEventListener('keydown', onKey);
-  if (gsapOk()) {
-    globalThis.gsap.fromTo(el, { opacity: 0 }, { opacity: 1, duration: 0.2 });
-    globalThis.gsap.fromTo(el.querySelector('.modal'), { y: 22, opacity: 0, scale: 0.97 }, { y: 0, opacity: 1, scale: 1, duration: 0.35, ease: 'back.out(1.4)' });
-  }
   onMount?.(el, close);
   return { el, close, closed: closedP };
 }
@@ -96,7 +88,7 @@ export function formModal({ title, body, submitLabel = 'Save', wide = false, onS
           } catch (err) {
             errBox.textContent = err.message || String(err);
             errBox.hidden = false;
-            if (gsapOk()) globalThis.gsap.fromTo(errBox, { x: -6 }, { x: 0, duration: 0.4, ease: 'elastic.out(1, 0.3)' });
+            errBox.classList.remove('shake'); void errBox.offsetWidth; errBox.classList.add('shake');
           } finally { btn.disabled = false; }
         };
         el.querySelector('[data-submit]').addEventListener('click', submit);
@@ -126,12 +118,8 @@ export function toast(message, kind = 'ok') {
   t.className = `toast toast-${kind}`;
   t.innerHTML = `${icon(kind === 'bad' ? 'exclamation-octagon-fill' : kind === 'warn' ? 'exclamation-triangle-fill' : 'check-circle-fill')}<span>${esc(message)}</span>`;
   root.appendChild(t);
-  if (gsapOk()) globalThis.gsap.fromTo(t, { x: 40, opacity: 0 }, { x: 0, opacity: 1, duration: 0.35, ease: 'power3.out' });
-  // Removal is a plain timer, so toasts never pile up even when animation is unavailable.
-  setTimeout(() => {
-    if (gsapOk()) globalThis.gsap.to(t, { opacity: 0, x: 20, duration: 0.3, onComplete: () => t.remove() });
-    setTimeout(() => t.remove(), 400);
-  }, 3200);
+  // Entrance is a CSS animation; removal is a plain timer, so toasts never pile up or stay stuck.
+  setTimeout(() => { t.classList.add('is-closing'); setTimeout(() => t.remove(), 300); }, 3200);
 }
 export const toastError = (err) => toast(err?.message || String(err), 'bad');
 
@@ -151,12 +139,6 @@ export function fillBars(root) {
     const w = Math.max(0, Math.min(100, Number(b.dataset.fill) || 0));
     requestAnimationFrame(() => { b.style.width = `${w}%`; });
   });
-}
-
-// Staggered entrance for the main blocks of a page.
-export function enter(root, selector = '.reveal') {
-  if (!gsapOk()) return;
-  globalThis.gsap.from(root.querySelectorAll(selector), { y: 18, opacity: 0, duration: 0.5, ease: 'power3.out', stagger: 0.06, clearProps: 'transform,opacity' });
 }
 
 export function printHtml(html) {

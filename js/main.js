@@ -1,7 +1,7 @@
 // Boot, sign-in gate, navigation and hash routing.
 import * as store from './store.js';
 import * as auth from './auth.js';
-import { toastError, icon, esc, enter } from './ui.js';
+import { toastError, icon, esc } from './ui.js';
 
 const ROUTES = {
   dashboard: { title: 'Dashboard', section: 'Overview', icon: 'speedometer2', load: () => import('./views/dashboard.js') },
@@ -20,27 +20,12 @@ const $ = (sel) => document.querySelector(sel);
 let renderToken = 0;
 
 // ---------- Sign-in ----------
+// The sign-in intro is a CSS animation (see styles.css): it runs whenever the section is shown.
 function showLogin(note = '') {
   $('#app').hidden = true;
   $('#login').hidden = false;
   $('#login-note').textContent = note;
-  introLogin();
   setTimeout(() => $('#login-user').focus(), 60);
-}
-
-function introLogin() {
-  if (!globalThis.gsap || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-  const g = globalThis.gsap;
-  g.timeline()
-    .from('.login-art .b', { scaleY: 0, transformOrigin: 'bottom', duration: 0.9, ease: 'power3.out', stagger: 0.12 })
-    .from('.login-art .win', { opacity: 0, duration: 0.3, stagger: { each: 0.03, from: 'random' } }, '-=0.3')
-    .to('.login-art .win', { opacity: 0.25, duration: 1.2, repeat: -1, yoyo: true, stagger: { each: 0.25, from: 'random' }, ease: 'sine.inOut' }, '-=0.1')
-    .from('.login-art .ground', { scaleX: 0, transformOrigin: 'left', duration: 0.8, ease: 'power2.out' }, 0)
-    .from('.login-art .crane', { opacity: 0, duration: 0.5 }, 0.2)
-    .fromTo('.login-art .hook', { y: -40 }, { y: 0, duration: 1.4, ease: 'power1.inOut', yoyo: true, repeat: -1 }, 0.8)
-    .from('.login-brand .mark span', { y: -28, opacity: 0, rotation: -8, duration: 0.5, ease: 'back.out(2)', stagger: 0.1 }, 0.1)
-    .from('.login-card', { y: 26, opacity: 0, duration: 0.7, ease: 'power3.out' }, 0.25)
-    .from('.blueprint', { opacity: 0, duration: 1 }, 0);
 }
 
 $('#login-form').addEventListener('submit', async (e) => {
@@ -58,7 +43,8 @@ $('#login-form').addEventListener('submit', async (e) => {
   } catch (ex) {
     err.textContent = ex.message;
     err.hidden = false;
-    if (globalThis.gsap) globalThis.gsap.fromTo('.login-card', { x: -8 }, { x: 0, duration: 0.5, ease: 'elastic.out(1, 0.3)' });
+    const card = document.querySelector('.login-card');
+    card.classList.remove('shake'); void card.offsetWidth; card.classList.add('shake');
   } finally {
     btn.disabled = false;
     btn.querySelector('span').textContent = 'Sign in';
@@ -118,7 +104,6 @@ async function route() {
     view.replaceChildren(container);
     await mod.default.render(container, { params: parts.slice(1), kind: r.kind, route: id, ...ctx });
     if (token !== renderToken) return;
-    enter(container);
     view.scrollTop = 0;
     window.scrollTo(0, 0);
   } catch (e) {
@@ -136,10 +121,6 @@ async function enterApp() {
   buildNav();
   $('#login').hidden = true;
   $('#app').hidden = false;
-  if (globalThis.gsap && !matchMedia('(prefers-reduced-motion: reduce)').matches) {
-    globalThis.gsap.from('.sidebar', { x: -24, opacity: 0, duration: 0.5, ease: 'power3.out' });
-    globalThis.gsap.from('.topbar', { y: -12, opacity: 0, duration: 0.45, ease: 'power2.out', delay: 0.05 });
-  }
   await route();
 }
 

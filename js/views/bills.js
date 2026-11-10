@@ -187,8 +187,6 @@ function newBill(root, ctx) {
     $('#bill-stock-hint').textContent = '';
     updateLineTotal();
     drawLines();
-    const row = $('#bill-lines').lastElementChild;
-    if (globalThis.gsap && row) globalThis.gsap.from(row, { x: 24, opacity: 0, duration: 0.35, ease: 'power3.out' });
   });
 
   $('#bill-lines').addEventListener('click', (e) => {

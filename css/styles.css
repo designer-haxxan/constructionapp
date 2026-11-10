@@ -559,11 +559,13 @@ select.compact, .select.compact, input.compact { padding: 9px 12px; width: auto;
 }
 @media (max-width: 860px) {
   #app { grid-template-columns: 1fr; }
+  /* Phone drawer: closed = off-screen AND hidden (not tappable). Open = on screen. */
   .sidebar {
-    position: fixed; left: 0; top: 0; bottom: 0; height: 100vh; width: 280px; z-index: 60; transform: translateX(-102%);
-    transition: transform .35s cubic-bezier(.2,.8,.2,1); box-shadow: 30px 0 60px -30px #000;
+    position: fixed; left: 0; top: 0; bottom: 0; height: 100vh; height: 100dvh; width: 280px; z-index: 60;
+    transform: translateX(-102%); visibility: hidden; box-shadow: 30px 0 60px -30px #000;
+    transition: transform .35s cubic-bezier(.2,.8,.2,1), visibility 0s linear .35s;
   }
-  .sidebar.open { transform: none; }
+  .sidebar.open { transform: none; visibility: visible; transition: transform .35s cubic-bezier(.2,.8,.2,1), visibility 0s; }
   .scrim { display: block; position: fixed; inset: 0; background: rgba(0,0,0,.55); z-index: 55; opacity: 0; pointer-events: none; transition: opacity .3s; }
   .scrim.show { opacity: 1; pointer-events: auto; }
   .menu-btn { display: inline-grid; }
@@ -606,6 +608,50 @@ select.compact, .select.compact, input.compact { padding: 9px 12px; width: auto;
   .balance-value { font-size: 32px; }
   .stock-bar-col { min-width: 150px; }
 }
+
+/* Entrance and exit animations. They use `backwards` fill, so the start state applies only while the
+   animation runs and nothing stays hidden afterwards (no inline styles, no dependence on a script). */
+@keyframes fade-in { from { opacity: 0; } }
+@keyframes fade-out { to { opacity: 0; } }
+@keyframes pop-in { from { opacity: 0; transform: translateY(18px) scale(.97); } }
+@keyframes pop-out { to { opacity: 0; transform: translateY(12px) scale(.98); } }
+@keyframes rise-in { from { opacity: 0; transform: translateY(16px); } }
+@keyframes slide-in { from { opacity: 0; transform: translateX(40px); } }
+@keyframes slide-out { to { opacity: 0; transform: translateX(24px); } }
+@keyframes shake { 0%, 100% { transform: none; } 25% { transform: translateX(-7px); } 75% { transform: translateX(7px); } }
+@keyframes grow-up { from { transform: scaleY(0); } }
+@keyframes grow-across { from { transform: scaleX(0); } }
+@keyframes drop-in { from { opacity: 0; transform: translateY(-22px) rotate(-8deg); } }
+@keyframes hang { 0%, 100% { transform: translateY(-14px); } 50% { transform: translateY(12px); } }
+@keyframes glow { 0%, 100% { opacity: .15; } 50% { opacity: .6; } }
+
+#modal-root .modal-backdrop { animation: fade-in .2s ease backwards; }
+#modal-root .modal { animation: pop-in .34s cubic-bezier(.2,1.2,.3,1) backwards; }
+#modal-root .modal-backdrop.is-closing { animation: fade-out .2s ease forwards; }
+#modal-root .modal-backdrop.is-closing .modal { animation: pop-out .2s ease-in forwards; }
+.toast { animation: slide-in .35s cubic-bezier(.2,.8,.2,1) backwards; }
+.toast.is-closing { animation: slide-out .3s ease forwards; }
+.view .reveal { animation: rise-in .55s cubic-bezier(.2,.8,.2,1) backwards; }
+.form-error.shake, .login-card.shake { animation: shake .4s ease; }
+.login-card { animation: rise-in .7s .25s cubic-bezier(.2,.8,.2,1) backwards; }
+.login-brand .mark span { animation: drop-in .5s cubic-bezier(.3,1.4,.5,1) backwards; }
+.login-brand .mark span:nth-child(2) { animation-delay: .08s; }
+.login-brand .mark span:nth-child(3) { animation-delay: .16s; }
+.login-brand .mark span:nth-child(4) { animation-delay: .24s; }
+.login-brand .mark span:nth-child(5) { animation-delay: .32s; }
+.login-brand .mark span:nth-child(6) { animation-delay: .4s; }
+.blueprint { animation: fade-in 1s ease backwards; }
+.skyline .b { animation: grow-up .9s cubic-bezier(.2,.8,.2,1) backwards; }
+.skyline .b1 { animation-delay: .05s; }
+.skyline .b2 { animation-delay: .17s; }
+.skyline .b3 { animation-delay: .29s; }
+.skyline .b4 { animation-delay: .41s; }
+.skyline .ground { animation: grow-across .8s ease-out backwards; transform-box: fill-box; transform-origin: left; }
+.skyline .crane { animation: fade-in .5s ease .2s backwards; }
+.skyline .hook { transform-box: fill-box; animation: hang 2.8s ease-in-out infinite; }
+.skyline .win { animation: glow 3.2s ease-in-out infinite; }
+.skyline .win:nth-child(3n) { animation-delay: -1.1s; }
+.skyline .win:nth-child(4n) { animation-delay: -2.2s; }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: 0.001ms !important; animation-iteration-count: 1 !important; transition-duration: 0.001ms !important; scroll-behavior: auto !important; }
