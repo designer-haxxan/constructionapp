@@ -1,8 +1,8 @@
 // Offline shell for the materials ledger. Ledger data lives in IndexedDB on the device, not in this cache.
 // Bump VERSION whenever a file in SHELL changes so installed copies pick up the new files.
-const VERSION = 'materials-ledger-v2.0.1';
+const VERSION = 'materials-ledger-v2.0.2';
 const SHELL = [
-  './', './index.html', './manifest.json', './icon.svg', './css/styles.css',
+  './', './index.html', './manifest.json', './icon.svg', './img/logo.png', './css/styles.css',
   './js/main.js', './js/store.js', './js/auth.js', './js/ui.js', './js/domain.js', './js/seed.js',
   './js/views/common.js', './js/views/dashboard.js', './js/views/bills.js', './js/views/purchases.js',
   './js/views/parties.js', './js/views/stock.js', './js/views/prices.js', './js/views/reports.js', './js/views/settings.js',

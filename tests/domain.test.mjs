@@ -9,8 +9,8 @@ const cust = (s, name) => s.customers.find((c) => c.name === name);
 const dealer = (s, name) => s.dealers.find((d) => d.name === name);
 const item = (s, product, brand = '', quality = '') => s.items.find((i) => i.id === D.itemId(product, brand, quality));
 
-test('Form sheet: purchase total = qty × price − rent (Form D24)', () => {
-  assert.equal(D.purchaseTotal({ qty: 600, price: 1390, rent: 80000 }), 754000);
+test('Form sheet: purchase total = qty × price + freight', () => {
+  assert.equal(D.purchaseTotal({ qty: 600, price: 1390, freight: 80000 }), 914000);
 });
 
 test('Bill sheet: amount, arrears and remainder match the Excel invoice 4738', () => {
@@ -76,12 +76,12 @@ test('Dealer ledger: purchase adds to what we owe, paid-now and later payments r
   const s = fresh();
   const d = dealer(s, 'Sadaat');
   const cement = item(s, 'Cement', 'Paidar');
-  D.addPurchase(s, { date: '2026-07-01', dealerId: d.id, itemId: cement.id, qty: 600, price: 1390, rent: 80000, paidNow: 500000 });
-  assert.equal(D.dealerBalance(s, d.id), 254000);
+  D.addPurchase(s, { date: '2026-07-01', dealerId: d.id, itemId: cement.id, qty: 600, price: 1390, freight: 80000, paidNow: 500000 });
+  assert.equal(D.dealerBalance(s, d.id), 414000);
   const { balance, rows } = D.ledger(s, 'dealer', d.id);
-  assert.equal(balance, 254000, 'dealer balance is positive when we owe');
+  assert.equal(balance, 414000, 'dealer balance is positive when we owe');
   assert.deepEqual(rows.map((r) => r.kind), ['purchase', 'payment']);
-  D.addPayment(s, { dir: 'out', partyId: d.id, date: '2026-07-10', amount: 254000 });
+  D.addPayment(s, { dir: 'out', partyId: d.id, date: '2026-07-10', amount: 414000 });
   assert.equal(D.dealerBalance(s, d.id), 0);
 });
 
@@ -173,4 +173,66 @@ test('Invoice numbers must be above the last saved bill', () => {
   assert.throws(() => D.setNextInvoiceNo(s, 4739), /above/);
   D.setNextInvoiceNo(s, 5000);
   assert.equal(s.invoice.next, 5000);
+});
+
+test('Bill: freight and labour charges are added to the bill amount', () => {
+  const s = fresh();
+  const c = cust(s, 'Hannan Mir');
+  const cement = item(s, 'Cement', 'Paidar');
+  const inv = D.addInvoice(s, { date: '2026-07-03', customerId: c.id, lines: [{ itemId: cement.id, qty: 10, price: 1000 }], freight: 500, labour: 300 });
+  assert.equal(inv.subtotal, 10000);
+  assert.equal(inv.amount, 10800);
+  assert.equal(inv.remainder, 10800 + inv.arrears);
+});
+
+test('Purchase: credit leaves the dealer ledger with the purchase but no payment entry', () => {
+  const s = fresh();
+  const d = dealer(s, 'Sadaat');
+  const cement = item(s, 'Cement', 'Paidar');
+  const row = D.addPurchase(s, { date: '2026-07-01', dealerId: d.id, itemId: cement.id, qty: 10, price: 1000, payment: 'Credit' });
+  assert.equal(row.paidNow, 0);
+  assert.equal(s.payments.length, 0, 'no debit entry for credit');
+  assert.equal(D.dealerBalance(s, d.id), 10000);
+  assert.throws(() => D.addPurchase(s, { dealerId: d.id, itemId: cement.id, qty: 1, price: 10, payment: 'Credit', paidNow: 5 }), /credit/);
+});
+
+test('Purchase: editing a purchase recalculates total and its paid-now payment', () => {
+  const s = fresh();
+  const d = dealer(s, 'Sadaat');
+  const cement = item(s, 'Cement', 'Paidar');
+  const row = D.addPurchase(s, { date: '2026-07-01', dealerId: d.id, itemId: cement.id, qty: 10, price: 1000, paidNow: 4000 });
+  D.updatePurchase(s, row.id, { date: '2026-07-02', dealerId: d.id, itemId: cement.id, qty: 10, price: 1000, freight: 1000, paidNow: 2000 });
+  const p = s.purchases.find((x) => x.id === row.id);
+  assert.equal(p.total, 11000);
+  assert.equal(p.no, row.no, 'purchase number is kept');
+  assert.equal(s.payments.length, 1);
+  assert.equal(s.payments[0].amount, 2000);
+  assert.equal(D.dealerBalance(s, d.id), 9000);
+});
+
+test('Bill: editing keeps the number, rewrites the deposit and leaves arrears as before the bill', () => {
+  const s = fresh();
+  const c = cust(s, 'Hannan Mir');
+  const cement = item(s, 'Cement', 'Paidar');
+  const first = D.addInvoice(s, { date: '2026-07-01', customerId: c.id, lines: [{ itemId: cement.id, qty: 10, price: 1000 }] });
+  const second = D.addInvoice(s, { date: '2026-07-02', customerId: c.id, lines: [{ itemId: cement.id, qty: 5, price: 1000 }], deposit: 1000 });
+  assert.equal(second.arrears, 10000);
+  D.updateInvoice(s, second.id, { date: '2026-07-02', customerId: c.id, lines: [{ itemId: cement.id, qty: 4, price: 1000 }], deposit: 2000, freight: 200 });
+  const e = s.invoices.find((i) => i.id === second.id);
+  assert.equal(e.no, second.no);
+  assert.equal(e.arrears, 10000, 'arrears are the balance before this bill');
+  assert.equal(e.amount, 4200);
+  assert.equal(s.payments.filter((p) => p.refId === second.id).length, 1);
+  assert.equal(D.customerBalance(s, c.id), 10000 + 4200 - 2000 - 0, 'first bill + edited bill − deposit');
+  assert.equal(first.amount, 10000);
+});
+
+test('Migration: old purchases with Rent get Freight added to the total', () => {
+  const s = fresh();
+  s.purchases.push({ id: 'x', no: 1, date: '2026-07-01', dealerId: 'd', itemId: 'i', qty: 10, price: 1000, rent: 500, total: 9500, paidNow: 0 });
+  D.migrateState(s);
+  const p = s.purchases.at(-1);
+  assert.equal(p.freight, 500);
+  assert.equal(p.total, 10500);
+  assert.equal(p.rent, undefined);
 });

@@ -1,15 +1,16 @@
-// Sales bills (the Bill sheet): the bill register, the bill builder and the printable invoice.
+// Sales bills (the Bill sheet): the bill register, the bill builder (new and editing) and the printable invoice.
 import * as store from '../store.js';
 import { esc, money, qty, dateLong, todayIso, icon, pill, confirmBox, toast, toastError, countUp, printHtml } from '../ui.js';
-import { addInvoice, deleteInvoice, documentStatus, customerBalance, invoiceLabel, stockByItem, stockShortages, lineTotal, round2, num, itemName } from '../domain.js';
+import { addInvoice, updateInvoice, deleteInvoice, documentStatus, arrearsFor, invoiceLabel, stockByItem, stockShortages, lineTotal, round2, num, itemName } from '../domain.js';
 import { mountItemPicker, invoiceDoc, partyOptions } from './common.js';
 import { customerForm } from './parties.js';
 
 export default {
   async render(root, ctx) {
-    const [sub] = ctx.params;
-    if (sub === 'new') return newBill(root, ctx);
-    if (sub) return invoiceView(root, sub, ctx);
+    const [sub, action] = ctx.params;
+    if (sub === 'new') return newBill(root, ctx, null);
+    if (sub && action === 'edit') return newBill(root, ctx, sub);
+    if (sub) return invoiceView(root, sub);
     return register(root, ctx);
   },
 };
@@ -37,7 +38,10 @@ function register(root, ctx) {
           <td class="num">${money(i.amount)}</td>
           <td class="num">${money(i.remainder)}</td>
           <td>${pill(status.get(i.id)?.status || 'Unpaid')}</td>
-          <td class="actions"><a class="icon-btn" href="#/bills/${esc(i.id)}" title="Open" aria-label="Open bill">${icon('eye')}</a></td></tr>`).join('')}</tbody>
+          <td class="actions">
+            <a class="icon-btn" href="#/bills/${esc(i.id)}" title="Open" aria-label="Open bill">${icon('eye')}</a>
+            <a class="icon-btn" href="#/bills/${esc(i.id)}/edit" title="Edit" aria-label="Edit bill">${icon('pencil')}</a>
+          </td></tr>`).join('')}</tbody>
       </table></div>` : `<div class="empty"><div class="empty-icon">${icon('receipt')}</div><p>No bills yet.</p><a class="btn btn-accent" href="#/bills/new">Create the first bill</a></div>`}
     </div>`;
   root.querySelector('[data-search]')?.addEventListener('input', (e) => {
@@ -46,26 +50,32 @@ function register(root, ctx) {
   });
 }
 
-// ---------- Bill builder ----------
-function newBill(root, ctx) {
+// ---------- Bill builder (a new bill, or a saved one being edited) ----------
+function newBill(root, ctx, editId) {
   const s = store.get();
-  const lines = [];
-  let customerId = '';
+  const ex = editId ? s.invoices.find((i) => i.id === editId) : null;
+  if (editId && !ex) {
+    root.innerHTML = `<div class="empty"><div class="empty-icon">${icon('receipt')}</div><p>This bill no longer exists.</p><a class="btn btn-ghost" href="#/bills">Back to bills</a></div>`;
+    return;
+  }
+  const exDeposit = ex ? s.payments.find((p) => p.refType === 'invoice' && p.refId === ex.id) : null;
+  const lines = ex ? ex.lines.map((l) => ({ ...l, hue: '#e09028' })) : [];
+  let customerId = ex?.customerId || '';
   let picker = null;
-  const state = { deposit: 0 };
 
   root.innerHTML = `
     <div class="builder">
       <div class="builder-main">
         <section class="card reveal">
-          <div class="card-head"><h3><span class="step">1</span> Customer</h3></div>
+          <div class="card-head"><h3><span class="step">1</span> Customer and date</h3>${ex ? `<span class="muted small">Editing ${esc(invoiceLabel(s, ex.no))}</span>` : ''}</div>
           <div class="row-gap">
             <select class="select" id="bill-customer" aria-label="Customer">
-              <option value="">Choose customer…</option>${partyOptions(s.customers)}
+              <option value="">Choose customer…</option>${partyOptions(s.customers, customerId)}
             </select>
             <button class="btn btn-ghost" id="bill-new-customer" type="button"><i class="bi bi-person-plus"></i> New</button>
           </div>
           <div class="customer-card" id="bill-customer-card"><span class="muted">Pick a customer to see their ledger balance.</span></div>
+          <label class="field bill-date"><span>Bill date</span><input type="date" id="bill-date" value="${esc(ex?.date || todayIso())}"></label>
         </section>
 
         <section class="card reveal">
@@ -87,13 +97,17 @@ function newBill(root, ctx) {
           <div class="lines" id="bill-lines"></div>
         </section>
         <section class="card totals reveal">
+          <div class="totals-row"><span>Items</span><strong class="num" id="t-items">${money(0)}</strong></div>
+          <label class="totals-row totals-input"><span>Freight (Rs)</span><input type="number" min="0" step="any" inputmode="decimal" id="bill-freight" value="${ex ? esc(ex.freight || 0) : 0}" aria-label="Freight"></label>
+          <label class="totals-row totals-input"><span>Labour charges (Rs)</span><input type="number" min="0" step="any" inputmode="decimal" id="bill-labour" value="${ex ? esc(ex.labour || 0) : 0}" aria-label="Labour charges"></label>
           <div class="totals-row"><span>Amount</span><strong class="num" id="t-amount">${money(0)}</strong></div>
           <div class="totals-row"><span>Arrears (ledger balance)</span><strong class="num" id="t-arrears">${money(0)}</strong></div>
-          <label class="totals-row totals-input"><span>Deposit received</span><input type="number" min="0" step="any" inputmode="decimal" id="bill-deposit" value="0" aria-label="Deposit"></label>
+          <label class="totals-row totals-input"><span>Deposit received</span><input type="number" min="0" step="any" inputmode="decimal" id="bill-deposit" value="${ex ? esc(exDeposit?.amount ?? ex.deposit ?? 0) : 0}" aria-label="Deposit"></label>
           <div class="totals-row big"><span>Remainder</span><strong class="num" id="t-remainder">${money(0)}</strong></div>
           <div class="totals-note" id="t-note"></div>
           <div class="totals-actions">
-            <button class="btn btn-ghost" id="bill-save" type="button">Save bill</button>
+            ${ex ? `<a class="btn btn-ghost" href="#/bills/${esc(ex.id)}">Cancel</a>` : ''}
+            <button class="btn btn-ghost" id="bill-save" type="button">${ex ? 'Save changes' : 'Save bill'}</button>
             <button class="btn btn-accent" id="bill-save-print" type="button"><i class="bi bi-printer"></i> Save &amp; print</button>
           </div>
         </section>
@@ -123,7 +137,7 @@ function newBill(root, ctx) {
   $('#bill-qty').addEventListener('input', updateLineTotal);
   $('#bill-price').addEventListener('input', updateLineTotal);
 
-  const amountOf = () => round2(lines.reduce((a, l) => a + l.total, 0));
+  const itemsOf = () => round2(lines.reduce((a, l) => a + l.total, 0));
   function drawLines() {
     const box = $('#bill-lines');
     box.innerHTML = lines.length
@@ -136,30 +150,40 @@ function newBill(root, ctx) {
     drawTotals();
   }
 
+  // Arrears are the balance brought forward; when editing, this bill and its deposit are left out.
   function drawTotals() {
     const cust = customerId ? store.get().customers.find((c) => c.id === customerId) : null;
-    const arrears = cust ? customerBalance(store.get(), cust.id) : 0;
-    const amount = amountOf();
+    const arrears = cust ? arrearsFor(store.get(), cust.id, ex?.id || null) : 0;
+    const items = itemsOf();
+    const fr = round2(num($('#bill-freight').value));
+    const lb = round2(num($('#bill-labour').value));
+    const amount = round2(items + fr + lb);
     const dep = round2(num($('#bill-deposit').value));
     const remainder = round2(amount + arrears - dep);
+    const over = dep > amount + arrears + 0.004;
+    countUp($('#t-items'), items, money);
     countUp($('#t-amount'), amount, money);
     $('#t-arrears').textContent = money(arrears);
     countUp($('#t-remainder'), remainder, money);
     const note = $('#t-note');
-    if (dep > amount + arrears + 0.004) note.textContent = 'Deposit is more than the bill. The extra is kept as advance on the ledger.';
+    if (over) note.textContent = 'Deposit is more than the bill. The extra is kept as advance on the ledger.';
     else if (!cust) note.textContent = 'Choose a customer to save this bill.';
     else note.textContent = remainder > 0 ? 'Remaining balance stays on the customer ledger.' : 'Fully settled with this bill.';
-    note.classList.toggle('bad', dep > amount + arrears + 0.004);
+    note.classList.toggle('bad', over);
   }
 
-  $('#bill-deposit').addEventListener('input', drawTotals);
+  ['#bill-deposit', '#bill-freight', '#bill-labour'].forEach((sel) => $(sel).addEventListener('input', drawTotals));
 
-  $('#bill-customer').addEventListener('change', (e) => {
-    customerId = e.target.value;
-    const c = store.get().customers.find((x) => x.id === customerId);
+  function showCustomer() {
+    const c = customerId ? store.get().customers.find((x) => x.id === customerId) : null;
     $('#bill-customer-card').innerHTML = c
       ? `<div class="strong">${esc(c.name)}</div><div class="muted small">${esc([c.contact, c.address, c.city].filter(Boolean).join(' · '))}</div>`
       : `<span class="muted">Pick a customer to see their ledger balance.</span>`;
+  }
+
+  $('#bill-customer').addEventListener('change', (e) => {
+    customerId = e.target.value;
+    showCustomer();
     drawTotals();
   });
 
@@ -180,7 +204,7 @@ function newBill(root, ctx) {
     if (!it) return toast('Pick a product first.', 'warn');
     if (!(q > 0)) return toast('Enter the quantity.', 'warn');
     if (p === '' || num(p) < 0) return toast('Enter the rate.', 'warn');
-    lines.push({ itemId: it.id, product: it.product, brand: it.brand, quality: it.quality, unit: it.unit, qty: q, price: num(p), total: lineTotal(q, p), hue: '#ffb703' });
+    lines.push({ itemId: it.id, product: it.product, brand: it.brand, quality: it.quality, unit: it.unit, qty: q, price: num(p), total: lineTotal(q, p), hue: '#e09028' });
     $('#bill-qty').value = '';
     picker.reset();
     $('#bill-price').value = '';
@@ -200,7 +224,10 @@ function newBill(root, ctx) {
     try {
       if (!customerId) throw new Error('Choose the customer first.');
       if (!lines.length) throw new Error('Add at least one item.');
-      const short = stockShortages(store.get(), lines);
+      // When editing, the saved bill's own quantities are not counted against stock.
+      const current = store.get();
+      const basis = ex ? { ...current, invoices: current.invoices.filter((i) => i.id !== ex.id) } : current;
+      const short = stockShortages(basis, lines);
       if (short.length) {
         const list = short.map((x) => {
           const it = store.get().items.find((i) => i.id === x.itemId);
@@ -209,8 +236,23 @@ function newBill(root, ctx) {
         const ok = await confirmBox(`Not enough stock: ${list}. Save the bill anyway? Stock will go negative until purchases are recorded.`, { okLabel: 'Save anyway', danger: true });
         if (!ok) return;
       }
-      const dep = num($('#bill-deposit').value);
-      const inv = await store.mutate((d) => addInvoice(d, { date: todayIso(), customerId, lines: lines.map((l) => ({ itemId: l.itemId, qty: l.qty, price: l.price })), deposit: dep }));
+      const values = {
+        date: $('#bill-date').value || todayIso(),
+        customerId,
+        lines: lines.map((l) => ({ itemId: l.itemId, qty: l.qty, price: l.price })),
+        deposit: num($('#bill-deposit').value),
+        depositMethod: exDeposit?.method || 'Cash',
+        freight: num($('#bill-freight').value),
+        labour: num($('#bill-labour').value),
+      };
+      if (ex) {
+        const inv = await store.mutate((d) => updateInvoice(d, ex.id, values));
+        toast(`${invoiceLabel(store.get(), inv.no)} updated · ${money(inv.remainder)} remaining`);
+        if (print) sessionStorage.setItem('autoPrint', inv.id);
+        location.hash = `#/bills/${inv.id}`;
+        return;
+      }
+      const inv = await store.mutate((d) => addInvoice(d, values));
       toast(`${invoiceLabel(store.get(), inv.no)} saved · ${money(inv.remainder)} remaining`);
       if (print) {
         sessionStorage.setItem('autoPrint', inv.id);
@@ -223,11 +265,12 @@ function newBill(root, ctx) {
   $('#bill-save').addEventListener('click', () => save(false));
   $('#bill-save-print').addEventListener('click', () => save(true));
 
+  showCustomer();
   drawLines();
 }
 
 // ---------- Invoice view ----------
-function invoiceView(root, id, ctx) {
+function invoiceView(root, id) {
   const s = store.get();
   const inv = s.invoices.find((i) => i.id === id);
   if (!inv) { root.innerHTML = `<div class="empty"><div class="empty-icon">${icon('receipt')}</div><p>This bill no longer exists.</p><a class="btn btn-ghost" href="#/bills">Back to bills</a></div>`; return; }
@@ -240,6 +283,7 @@ function invoiceView(root, id, ctx) {
       </div>
       <div class="page-actions">
         <button class="btn btn-danger-ghost" id="inv-del" type="button"><i class="bi bi-trash3"></i> Delete</button>
+        <a class="btn btn-ghost" href="#/bills/${esc(inv.id)}/edit"><i class="bi bi-pencil"></i> Edit</a>
         <button class="btn btn-accent" id="inv-print" type="button"><i class="bi bi-printer"></i> Print</button>
       </div>
     </div>

@@ -1,7 +1,7 @@
 // Reports: sales, purchases, receivables ageing, dealer payables and stock valuation. Each can be printed or exported as CSV.
 import * as store from '../store.js';
 import { esc, money, moneyShort, qty, dateLong, todayIso, icon, pill, printHtml, downloadFile, csv } from '../ui.js';
-import { salesReport, purchaseReport, agingReport, stockValuation, dealerBalance, invoiceLabel, purchaseLabel, itemName } from '../domain.js';
+import { salesReport, purchaseReport, agingReport, stockValuation, dealerBalance, invoiceLabel, purchaseLabel, itemName, documentStatus } from '../domain.js';
 import { reportDoc } from './common.js';
 
 const TABS = [
@@ -12,7 +12,7 @@ const TABS = [
   ['stock', 'Stock valuation', 'boxes'],
 ];
 let charts = [];
-const PALETTE = ['#ffb703', '#fb8500', '#60a5fa', '#34d399', '#fb7185', '#c084fc', '#94a3b8', '#fbbf24', '#2dd4bf'];
+const PALETTE = ['#e09028', '#b86a16', '#60a5fa', '#34d399', '#fb7185', '#c084fc', '#94a3b8', '#fbbf24', '#2dd4bf'];
 
 function monthStart(d) { return `${d.slice(0, 7)}-01`; }
 function presets(today) {
@@ -115,7 +115,7 @@ function sales(s, from, to, period) {
       destroyCharts();
       const Chart = globalThis.Chart; if (!Chart) return;
       Chart.defaults.color = '#94a3b8';
-      makeChart(root.querySelector('[data-chart]'), { type: 'bar', data: { labels: r.byMonth.map((m) => new Date(`${m.month}-01T00:00:00`).toLocaleDateString('en-GB', { month: 'short', year: '2-digit' })), datasets: [{ data: r.byMonth.map((m) => m.amount), backgroundColor: '#ffb703', borderRadius: 8, maxBarThickness: 40 }] }, options: { responsive: true, maintainAspectRatio: false, animation: { duration: 800 }, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => money(c.parsed.y) } } }, scales: { x: { grid: { display: false } }, y: { grid: { color: 'rgba(148,163,184,0.12)' }, ticks: { callback: (v) => moneyShort(v) } } } } });
+      makeChart(root.querySelector('[data-chart]'), { type: 'bar', data: { labels: r.byMonth.map((m) => new Date(`${m.month}-01T00:00:00`).toLocaleDateString('en-GB', { month: 'short', year: '2-digit' })), datasets: [{ data: r.byMonth.map((m) => m.amount), backgroundColor: '#e09028', borderRadius: 8, maxBarThickness: 40 }] }, options: { responsive: true, maintainAspectRatio: false, animation: { duration: 800 }, plugins: { legend: { display: false }, tooltip: { callbacks: { label: (c) => money(c.parsed.y) } } }, scales: { x: { grid: { display: false } }, y: { grid: { color: 'rgba(148,163,184,0.12)' }, ticks: { callback: (v) => moneyShort(v) } } } } });
       makeChart(root.querySelector('[data-chart2]'), { type: 'doughnut', data: { labels: prod.map((p) => p.product), datasets: [{ data: prod.map((p) => p.amount), backgroundColor: prod.map((_, i) => PALETTE[i % PALETTE.length]), borderColor: '#0f1620', borderWidth: 3 }] }, options: { responsive: true, maintainAspectRatio: false, cutout: '62%', plugins: { legend: { position: 'right' } } } });
     },
   };
@@ -123,8 +123,10 @@ function sales(s, from, to, period) {
 
 function purchases(s, from, to, period) {
   const r = purchaseReport(s, from, to);
+  const status = documentStatus(s);
+  const onCredit = r.purchases.filter((p) => p.payment === 'Credit').reduce((a, p) => a + p.total, 0);
   const html = `
-    ${kpis([['Purchased', money(r.total), 'accent'], ['Entries', String(r.count)], ['Paid out in period', money(r.paid), 'ok']])}
+    ${kpis([['Purchased', money(r.total), 'accent'], ['Entries', String(r.count)], ['Paid out in period', money(r.paid), 'ok'], ['On credit', money(onCredit), 'bad']])}
     <div class="grid-2">
       <div class="card reveal"><div class="card-head"><h3>Share by dealer</h3></div><div class="chart-box chart-donut"><canvas data-chart></canvas></div></div>
       <div class="card table-card reveal"><div class="card-head"><h3>By dealer</h3></div>
@@ -134,14 +136,14 @@ function purchases(s, from, to, period) {
         <div class="table-wrap"><table class="table"><thead><tr><th>Product</th><th class="num">Qty</th><th class="num">Amount</th></tr></thead>
           <tbody>${r.byProduct.map((p) => `<tr><td class="strong">${esc(p.product)}</td><td class="num">${qty(p.qty)} ${esc(p.unit)}</td><td class="num">${money(p.amount)}</td></tr>`).join('') || '<tr><td colspan="3">No purchases in this period</td></tr>'}</tbody></table></div></div>
     </div>
-    <div class="card table-card reveal"><div class="card-head"><h3>Entries · ${esc(period)}</h3></div>
-      <div class="table-wrap"><table class="table"><thead><tr><th>Entry</th><th>Date</th><th>Dealer</th><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Rent</th><th class="num">Total</th></tr></thead>
-        <tbody>${r.purchases.map((p) => `<tr><td>${purchaseLabel(p.no)}</td><td>${esc(dateLong(p.date))}</td><td>${esc(p.dealerName)}</td><td>${esc(itemName(p))}</td>
-          <td class="num">${qty(p.qty)} ${esc(p.unit)}</td><td class="num">${money(p.price)}</td><td class="num">${money(p.rent)}</td><td class="num">${money(p.total)}</td></tr>`).join('') || '<tr><td colspan="8">No purchases in this period</td></tr>'}</tbody></table></div></div>`;
-  const rows = [['Entry', 'Date', 'Dealer', 'Item', 'Qty', 'Unit', 'Price', 'Rent', 'Total']];
-  r.purchases.forEach((p) => rows.push([purchaseLabel(p.no), p.date, p.dealerName, itemName(p), p.qty, p.unit, p.price, p.rent, p.total]));
+    <div class="card table-card reveal"><div class="card-head"><h3>Purchase invoices · ${esc(period)}</h3></div>
+      <div class="table-wrap"><table class="table"><thead><tr><th>Invoice</th><th>Date</th><th>Dealer</th><th>Item</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Freight</th><th class="num">Total</th><th>Payment</th><th>Status</th></tr></thead>
+        <tbody>${r.purchases.map((p) => `<tr><td><a href="#/purchases/${esc(p.id)}">${purchaseLabel(p.no)}</a></td><td>${esc(dateLong(p.date))}</td><td>${esc(p.dealerName)}</td><td>${esc(itemName(p))}</td>
+          <td class="num">${qty(p.qty)} ${esc(p.unit)}</td><td class="num">${money(p.price)}</td><td class="num">${money(p.freight || 0)}</td><td class="num">${money(p.total)}</td><td>${esc(p.payment)}</td><td>${pill(status.get(p.id)?.status || 'Unpaid')}</td></tr>`).join('') || '<tr><td colspan="10">No purchases in this period</td></tr>'}</tbody></table></div></div>`;
+  const rows = [['Invoice', 'Date', 'Dealer', 'Item', 'Qty', 'Unit', 'Price', 'Freight', 'Total', 'Paid now', 'Payment', 'Status']];
+  r.purchases.forEach((p) => rows.push([purchaseLabel(p.no), p.date, p.dealerName, itemName(p), p.qty, p.unit, p.price, p.freight || 0, p.total, p.paidNow, p.payment, status.get(p.id)?.status || 'Unpaid']));
   return {
-    title: 'Purchase report', file: 'purchase-report', html, csv: rows,
+    title: 'Purchase invoice report', file: 'purchase-invoice-report', html, csv: rows,
     chart(root) {
       destroyCharts();
       const d = r.byDealer;

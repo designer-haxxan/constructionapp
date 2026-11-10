@@ -1,8 +1,9 @@
 // Business rules for the building-materials ledger. Pure functions only (no DOM, no storage), so they can be tested with node.
 //
 // Model (taken from the "Data Entry Form Shakeel Sons" workbook):
-//   purchases  – entries from dealers/suppliers (Form sheet). Total = Qty × Price − Rent.
-//   invoices   – sales bills to customers (Bill sheet). Amount = sum of lines; Remainder = Amount + Arrears − Deposit.
+//   purchases  – entries from dealers/suppliers (Form sheet). Total = Qty × Price + Freight.
+//   invoices   – sales bills to customers (Bill sheet). Amount = lines + Freight + Labour charges;
+//                Remainder = Amount + Arrears − Deposit.
 //   payments   – money received from customers (dir 'in') or paid to dealers (dir 'out'). Deposits and "paid now"
 //                amounts are payments linked to the invoice or purchase they came with.
 //   adjustments– stock corrections.
@@ -27,12 +28,18 @@ export const itemId = (product, brand = '', quality = '') => [product, brand, qu
 export const itemName = (it) => [it.product, it.brand, it.quality].filter(Boolean).join(' · ');
 
 export const lineTotal = (qty, price) => round2(num(qty) * num(price));
-export const purchaseTotal = ({ qty, price, rent }) => round2(num(qty) * num(price) - num(rent));
+export const purchaseTotal = ({ qty, price, freight }) => round2(num(qty) * num(price) + num(freight));
 
-// Bill totals as on the Bill sheet.
-export function invoiceTotals(lines, arrears = 0, deposit = 0) {
-  const amount = round2(lines.reduce((s, l) => s + num(l.total), 0));
-  return { amount, arrears: round2(num(arrears)), deposit: round2(num(deposit)), remainder: round2(amount + num(arrears) - num(deposit)) };
+// Bill totals: lines, plus freight and labour charges (both are billed), plus arrears, less the deposit.
+export function invoiceTotals(lines, arrears = 0, deposit = 0, freight = 0, labour = 0) {
+  const subtotal = round2(lines.reduce((s, l) => s + num(l.total), 0));
+  const fr = round2(num(freight));
+  const lb = round2(num(labour));
+  const amount = round2(subtotal + fr + lb);
+  return {
+    subtotal, freight: fr, labour: lb, amount,
+    arrears: round2(num(arrears)), deposit: round2(num(deposit)), remainder: round2(amount + num(arrears) - num(deposit)),
+  };
 }
 
 const cmpDoc = (a, b) => (a.date.localeCompare(b.date)) || ((a.no || 0) - (b.no || 0)) || String(a.createdAt || '').localeCompare(String(b.createdAt || ''));
@@ -73,6 +80,9 @@ function dealerDocs(state, dealerId) {
   for (const p of state.purchases.filter((x) => x.dealerId === dealerId)) docs.push({ id: p.id, date: p.date, no: p.no, amount: p.total, createdAt: p.createdAt });
   return docs.sort(cmpDoc);
 }
+
+// Balance a customer carried into a bill: the bill itself (and its deposit) is left out when invoiceId is given.
+export const arrearsFor = (state, customerId, invoiceId = null) => customerBalance(invoiceId ? withoutInvoice(state, invoiceId) : state, customerId);
 
 export function customerBalance(state, customerId) {
   const c = state.customers.find((x) => x.id === customerId);
@@ -230,36 +240,82 @@ export function deleteParty(state, kind, id) {
   state.payments = state.payments.filter((p) => p.partyId !== id);
 }
 
-export function addPurchase(state, { date, dealerId, itemId: id, qty, price, rent = 0, entryType = 'Purchasing', paidNow = 0, payment = 'Cash', createdAt = new Date().toISOString() }) {
+// Older saves kept Rent as a deduction. It is now Freight, which is added to the total.
+export function migrateState(state) {
+  for (const p of state.purchases) {
+    if (p.freight === undefined) {
+      p.freight = round2(num(p.rent));
+      p.total = purchaseTotal({ qty: p.qty, price: p.price, freight: p.freight });
+    }
+    delete p.rent;
+  }
+  return state;
+}
+
+const money2 = (v, label) => {
+  const n = round2(num(v));
+  if (n < 0) fail(`${label} cannot be negative.`);
+  return n;
+};
+
+// Checks a purchase form and returns the values to store. Credit means nothing is paid now.
+function purchaseRecord(state, { dealerId, itemId: id, qty, price, freight = 0, entryType = 'Purchasing', paidNow = 0, payment = 'Cash' }) {
   const item = state.items.find((i) => i.id === id);
   if (!item) fail('Choose an item from the price index.');
   const dealer = state.dealers.find((d) => d.id === dealerId);
   if (!dealer) fail('Choose the dealer.');
+  if (!PURCHASE_TYPES.includes(entryType)) fail('Choose Purchasing or Trading.');
   const q = round3(num(qty));
-  const p = round2(num(price));
-  const r = round2(num(rent));
   if (!(q > 0)) fail('Quantity must be more than zero.');
-  if (p < 0 || r < 0) fail('Price and rent cannot be negative.');
-  const total = purchaseTotal({ qty: q, price: p, rent: r });
-  const paid = round2(num(paidNow));
-  if (paid < 0 || paid > total + 0.004) fail('Paid now cannot be more than the purchase total.');
+  const p = money2(price, 'Price');
+  const f = money2(freight, 'Freight');
+  const total = purchaseTotal({ qty: q, price: p, freight: f });
+  const credit = payment === 'Credit';
+  if (credit && num(paidNow) > 0) fail('A credit purchase has nothing paid now. Set paid now to 0 or choose a payment method.');
+  const paid = credit ? 0 : money2(paidNow, 'Paid now');
+  if (paid > total + 0.004) fail('Paid now cannot be more than the purchase total.');
+  return {
+    dealerId: dealer.id, dealerName: dealer.name, itemId: item.id,
+    product: item.product, brand: item.brand, quality: item.quality, unit: unitOf(state, item.product),
+    entryType, qty: q, price: p, freight: f, total, payment, paidNow: paid,
+  };
+}
+const PURCHASE_TYPES = ['Purchasing', 'Trading'];
+
+// The paid-now amount is a payment linked to its purchase; it is rewritten whenever the purchase changes.
+function setPurchasePayment(state, row) {
+  state.payments = state.payments.filter((p) => !(p.refType === 'purchase' && p.refId === row.id));
+  if (row.paidNow > 0) state.payments.push({ id: uid(), date: row.date, dir: 'out', partyId: row.dealerId, amount: row.paidNow, method: row.payment, note: `Paid with ${purchaseLabel(row.no)}`, refType: 'purchase', refId: row.id, createdAt: row.createdAt });
+}
+
+export function addPurchase(state, data) {
+  const rec = purchaseRecord(state, data);
   const no = state.purchaseNo.next;
   state.purchaseNo.next += 1;
-  const row = {
-    id: uid(), no, date: date || localDate(), dealerId, dealerName: dealer.name, itemId: item.id,
-    product: item.product, brand: item.brand, quality: item.quality, unit: unitOf(state, item.product),
-    entryType, qty: q, price: p, rent: r, total, payment, paidNow: paid, createdAt,
-  };
+  const row = { id: uid(), no, date: data.date || localDate(), ...rec, createdAt: data.createdAt || new Date().toISOString() };
   state.purchases.push(row);
-  if (paid > 0) state.payments.push({ id: uid(), date: row.date, dir: 'out', partyId: dealerId, amount: paid, method: payment, note: `Paid with ${purchaseLabel(no)}`, refType: 'purchase', refId: row.id, createdAt });
+  setPurchasePayment(state, row);
   return row;
 }
 
-export function addInvoice(state, { date, customerId, lines, deposit = 0, depositMethod = 'Cash', createdAt = new Date().toISOString() }) {
-  const customer = state.customers.find((c) => c.id === customerId);
-  if (!customer) fail('Choose the customer.');
-  if (!lines.length) fail('Add at least one item to the bill.');
-  const clean = lines.map((l) => {
+export function updatePurchase(state, id, data) {
+  const row = state.purchases.find((p) => p.id === id);
+  if (!row) fail('This entry no longer exists.');
+  Object.assign(row, { date: data.date || row.date, ...purchaseRecord(state, data), updatedAt: new Date().toISOString() });
+  setPurchasePayment(state, row);
+  return row;
+}
+
+// The deposit is a payment linked to its bill; it is rewritten whenever the bill changes.
+function setInvoiceDeposit(state, inv, dep, method, createdAt) {
+  state.payments = state.payments.filter((p) => !(p.refType === 'invoice' && p.refId === inv.id));
+  if (dep > 0) state.payments.push({ id: uid(), date: inv.date, dir: 'in', partyId: inv.customerId, amount: dep, method, note: `Deposit on ${invoiceLabel(state, inv.no)}`, refType: 'invoice', refId: inv.id, createdAt });
+}
+
+// Checks bill lines and returns the stored lines.
+function cleanBillLines(state, lines) {
+  if (!lines || !lines.length) fail('Add at least one item to the bill.');
+  return lines.map((l) => {
     const item = state.items.find((i) => i.id === l.itemId);
     if (!item) fail(`Item not in the price index: ${l.product || 'unknown'}.`);
     const qty = round3(num(l.qty));
@@ -268,19 +324,49 @@ export function addInvoice(state, { date, customerId, lines, deposit = 0, deposi
     if (price < 0) fail(`Price for ${itemName(item)} cannot be negative.`);
     return { itemId: item.id, product: item.product, brand: item.brand, quality: item.quality, unit: unitOf(state, item.product), qty, price, total: lineTotal(qty, price) };
   });
-  const dep = round2(num(deposit));
-  if (dep < 0) fail('Deposit cannot be negative.');
+}
+
+// The state as it was before a bill and its deposit were written.
+function withoutInvoice(state, id) {
+  return { ...state, invoices: state.invoices.filter((i) => i.id !== id), payments: state.payments.filter((p) => !(p.refType === 'invoice' && p.refId === id)) };
+}
+
+export function addInvoice(state, { date, customerId, lines, deposit = 0, depositMethod = 'Cash', freight = 0, labour = 0, createdAt = new Date().toISOString() }) {
+  const customer = state.customers.find((c) => c.id === customerId);
+  if (!customer) fail('Choose the customer.');
+  const clean = cleanBillLines(state, lines);
+  const dep = money2(deposit, 'Deposit');
+  const fr = money2(freight, 'Freight');
+  const lb = money2(labour, 'Labour charges');
   const arrears = customerBalance(state, customerId);
-  const t = invoiceTotals(clean, arrears, dep);
   const no = state.invoice.next;
   state.invoice.next += 1;
   const invoice = {
     id: uid(), no, date: date || localDate(), customerId, customerName: customer.name, contact: customer.contact,
-    address: customer.address, city: customer.city, lines: clean, ...t, createdAt,
+    address: customer.address, city: customer.city, lines: clean, ...invoiceTotals(clean, arrears, dep, fr, lb), createdAt,
   };
   state.invoices.push(invoice);
-  if (dep > 0) state.payments.push({ id: uid(), date: invoice.date, dir: 'in', partyId: customerId, amount: dep, method: depositMethod, note: `Deposit on ${invoiceLabel(state, no)}`, refType: 'invoice', refId: invoice.id, createdAt });
+  setInvoiceDeposit(state, invoice, dep, depositMethod, createdAt);
   return invoice;
+}
+
+// Rewrites a saved bill. Its number stays the same; arrears are what the customer owed before this bill.
+export function updateInvoice(state, id, { date, customerId, lines, deposit = 0, depositMethod = 'Cash', freight = 0, labour = 0 }) {
+  const inv = state.invoices.find((i) => i.id === id);
+  if (!inv) fail('This bill no longer exists.');
+  const customer = state.customers.find((c) => c.id === customerId);
+  if (!customer) fail('Choose the customer.');
+  const clean = cleanBillLines(state, lines);
+  const dep = money2(deposit, 'Deposit');
+  const fr = money2(freight, 'Freight');
+  const lb = money2(labour, 'Labour charges');
+  const arrears = customerBalance(withoutInvoice(state, id), customerId);
+  Object.assign(inv, {
+    date: date || inv.date, customerId, customerName: customer.name, contact: customer.contact,
+    address: customer.address, city: customer.city, lines: clean, ...invoiceTotals(clean, arrears, dep, fr, lb), updatedAt: new Date().toISOString(),
+  });
+  setInvoiceDeposit(state, inv, dep, depositMethod, inv.createdAt);
+  return inv;
 }
 
 export function addPayment(state, { dir, partyId, date, amount, method = 'Cash', note = '', createdAt = new Date().toISOString() }) {

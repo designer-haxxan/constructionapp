@@ -80,6 +80,7 @@ export function invoiceDoc(state, inv) {
   return `<article class="paper invoice">
     <header class="paper-head">
       <div>
+        ${logoImg(b)}
         <div class="paper-brand">${esc(b.name)}</div>
         <div class="paper-sub">${esc(b.tagline || '')}</div>
         <div class="paper-addr">${esc(b.address)}<br>${esc(b.city)}<br>Phone ${esc(b.phone)}</div>
@@ -100,6 +101,9 @@ export function invoiceDoc(state, inv) {
       <tbody>${rows}</tbody>
     </table>
     <div class="paper-totals">
+      ${inv.freight || inv.labour ? `<div><span>Items</span><span class="num">${money(inv.subtotal ?? inv.amount)}</span></div>
+      <div><span>Freight</span><span class="num">${money(inv.freight || 0)}</span></div>
+      <div><span>Labour charges</span><span class="num">${money(inv.labour || 0)}</span></div>` : ''}
       <div><span>Amount</span><span class="num">${money(inv.amount)}</span></div>
       <div><span>Arrears brought forward</span><span class="num">${money(inv.arrears)}</span></div>
       <div><span>Deposit received</span><span class="num">− ${money(inv.deposit)}</span></div>
@@ -108,6 +112,46 @@ export function invoiceDoc(state, inv) {
     <footer class="paper-foot">
       <div class="sig">Seller signature</div><div class="sig">Customer signature</div>
       <p>All remaining arrears must be paid in full at your earliest convenience. Thank you for your business.</p>
+    </footer>
+  </article>`;
+}
+
+// Purchase invoice: what we bought from a dealer, with freight, what was paid now and what is still owed.
+export function purchaseDoc(state, p) {
+  const b = state.business;
+  const status = documentStatus(state).get(p.id);
+  const balance = status ? status.due : Math.max(0, p.total - p.paidNow);
+  return `<article class="paper invoice purchase-invoice">
+    <header class="paper-head">
+      <div>
+        ${logoImg(b)}
+        <div class="paper-brand">${esc(b.name)}</div>
+        <div class="paper-addr">${esc(b.address)}<br>${esc(b.city)}<br>Phone ${esc(b.phone)}</div>
+      </div>
+      <div class="paper-title">
+        <div class="paper-doc">Purchase invoice</div>
+        <div class="paper-no">${esc(purchaseLabel(p.no))}</div>
+        <div class="paper-date">${esc(dateLong(p.date))}</div>
+      </div>
+    </header>
+    <section class="paper-party">
+      <div><div class="label">Bought from</div><div class="party-name">${esc(p.dealerName)}</div></div>
+      <div class="paper-status"><div class="label">Status</div>${status ? `<strong>${esc(status.status)}</strong>` : ''}</div>
+    </section>
+    <table class="paper-table">
+      <thead><tr><th>Product</th><th>Brand</th><th>Quality</th><th>Type</th><th class="num">Qty</th><th class="num">Price</th><th class="num">Amount</th></tr></thead>
+      <tbody><tr><td>${esc(p.product)}</td><td>${esc(p.brand || '—')}</td><td>${esc(p.quality || '—')}</td><td>${esc(p.entryType)}</td>
+        <td class="num">${qty(p.qty)} ${esc(p.unit)}</td><td class="num">${money(p.price)}</td><td class="num">${money(p.qty * p.price)}</td></tr></tbody>
+    </table>
+    <div class="paper-totals">
+      <div><span>Freight</span><span class="num">${money(p.freight || 0)}</span></div>
+      <div class="grand"><span>Total payable</span><span class="num">${money(p.total)}</span></div>
+      <div><span>Paid now (${esc(p.payment)})</span><span class="num">${money(p.paidNow)}</span></div>
+      <div><span>Still owed to dealer</span><span class="num">${money(balance)}</span></div>
+    </div>
+    <footer class="paper-foot">
+      <div class="sig">Buyer signature</div><div class="sig">Dealer signature</div>
+      <p>${p.payment === 'Credit' ? 'Bought on credit. The amount stays on the dealer ledger until it is paid.' : 'Thank you for doing business with us.'}</p>
     </footer>
   </article>`;
 }
@@ -121,7 +165,7 @@ export function statementDoc(state, kind, party) {
   const balanceText = kind === 'customer' ? 'Balance receivable' : 'Balance payable';
   return `<article class="paper statement">
     <header class="paper-head">
-      <div><div class="paper-brand">${esc(b.name)}</div><div class="paper-addr">${esc(b.address)}<br>${esc(b.city)}<br>Phone ${esc(b.phone)}</div></div>
+      <div>${logoImg(b)}<div class="paper-brand">${esc(b.name)}</div><div class="paper-addr">${esc(b.address)}<br>${esc(b.city)}<br>Phone ${esc(b.phone)}</div></div>
       <div class="paper-title"><div class="paper-doc">${esc(label)}</div><div class="paper-date">Printed ${esc(dateLong(new Date().toISOString().slice(0, 10)))}</div></div>
     </header>
     <section class="paper-party"><div><div class="label">Account</div><div class="party-name">${esc(party.name)}</div>
@@ -138,16 +182,16 @@ export function statementDoc(state, kind, party) {
 export function reportDoc(business, title, subtitle, body) {
   return `<article class="paper report">
     <header class="paper-head">
-      <div><div class="paper-brand">${esc(business.name)}</div><div class="paper-addr">${esc(business.address)}, ${esc(business.city)}</div></div>
+      <div>${logoImg(business)}<div class="paper-brand">${esc(business.name)}</div><div class="paper-addr">${esc(business.address)}, ${esc(business.city)}</div></div>
       <div class="paper-title"><div class="paper-doc">${esc(title)}</div><div class="paper-date">${esc(subtitle)}</div></div>
     </header>${body}</article>`;
 }
 
 // ---------- Small helpers ----------
-export const dealersFor = (state, product) => {
-  const list = state.dealers.filter((d) => (d.productNames || []).includes(product));
-  return list.length ? list : state.dealers;
-};
+// Only the dealers whose profile lists this product (their products are set in the dealer profile).
+export const dealersFor = (state, product) => state.dealers.filter((d) => (d.productNames || []).includes(product));
+
+export const logoImg = (b) => `<img class="paper-logo" src="img/logo.png" width="380" height="145" alt="${esc(b.name)}">`;
 
 export const partyOptions = (list, selected = '') => list.map((p) => `<option value="${esc(p.id)}" ${p.id === selected ? 'selected' : ''}>${esc(p.name)}</option>`).join('');
 

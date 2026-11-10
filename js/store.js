@@ -1,6 +1,7 @@
 // Local storage of the ledger. One JSON document in IndexedDB (falls back to localStorage if IndexedDB is unavailable).
 // Every change goes through mutate(), which works on a copy and only replaces the saved state when the change succeeds.
 import { seedState } from './seed.js';
+import { migrateState } from './domain.js';
 
 const DB_NAME = 'materials_ledger';
 const STORE = 'kv';
@@ -54,7 +55,7 @@ async function writeRaw(value) {
 
 export async function init() {
   const saved = await readRaw();
-  state = saved && saved.version === 1 ? saved : seedState();
+  state = saved && saved.version === 1 ? migrateState(saved) : seedState();
   if (!saved) await writeRaw(state);
   return state;
 }
@@ -74,6 +75,7 @@ export async function replaceAll(next) {
   const valid = next && next.version === 1 && Array.isArray(next.customers) && Array.isArray(next.dealers)
     && Array.isArray(next.items) && Array.isArray(next.invoices) && Array.isArray(next.purchases) && Array.isArray(next.payments);
   if (!valid) throw new Error('This file is not a ledger backup.');
+  migrateState(next);
   await writeRaw(next);
   state = next;
 }

@@ -3,8 +3,8 @@
 A ledger app for a building-materials business (cement, steel, bricks, sand, aggregate, tiles, rings and wire), built from the
 "Data Entry Form Shakeel Sons" workbook.
 
-- **Purchases** from dealers, as on the workbook's *Form* sheet: Qty × Price − Rent, with payment method and "paid now".
-- **Sales bills** to customers, as on the *Bill* sheet: amount, arrears from the ledger, deposit, remainder, print.
+- **Purchases** from dealers, as on the workbook's *Form* sheet: Qty × Price + Freight, with payment method (including Credit), "paid now", editing and a printable purchase invoice.
+- **Sales bills** to customers, as on the *Bill* sheet: items, freight and labour charges, arrears from the ledger, deposit, remainder, editing and print.
 - **Customer ledgers** and **dealer ledgers**: a running balance per party, payments that settle the oldest items first,
   statements (print and CSV).
 - **Stock** on hand by product, brand and quality, valued at the **price index**; stock movements and adjustments.
@@ -38,10 +38,12 @@ Once signed in, the ledger works offline.
 
 ## Rules that come from the workbook
 
-- **Purchase total** = Quantity × Price − Rent (Form, cell D24). Rent is deducted, as the sheet does.
+- **Purchase total** = Quantity × Price + Freight. Freight is added to what we owe the dealer. Older entries that stored Rent as a deduction are converted when the app loads.
 - **Bill remainder** = Amount + Arrears − Deposit (Bill, cell F28). Arrears now come from the customer's ledger.
-- **Entry types** on a purchase: *Purchasing* adds stock and owes the dealer; *Trading* is recorded on the ledger only;
-  *Selling* takes stock out.
+- **Entry types** on a purchase: *Purchasing* adds stock and owes the dealer; *Trading* is recorded on the ledger only.
+  Selling is done from bills. Older *Selling* entries still count against stock.
+- **Credit** on a purchase means nothing is paid now: the amount stays on the dealer ledger and no payment entry is made.
+- **Dealers** in the purchase form are only the dealers whose profile lists the chosen product.
 - **Settlement**: a payment clears the oldest open item first (opening balance, then bills or purchases by date).
   A bill's status (Paid / Partly paid / Unpaid) follows from that.
 - **Deleting** a bill or purchase also removes the deposit or paid-now payment that came with it. A customer or dealer

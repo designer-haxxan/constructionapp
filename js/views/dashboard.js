@@ -5,7 +5,7 @@ import { totalsSummary, monthlySales, documentStatus, customerBalance, dealerBal
 import { balanceChip } from './common.js';
 
 let charts = [];
-const PALETTE = ['#ffb703', '#fb8500', '#60a5fa', '#34d399', '#fb7185', '#c084fc', '#94a3b8', '#fbbf24', '#2dd4bf'];
+const PALETTE = ['#e09028', '#b86a16', '#60a5fa', '#34d399', '#fb7185', '#c084fc', '#94a3b8', '#fbbf24', '#2dd4bf'];
 
 const kpi = (label, iconName, tone, value, fmt) => `
   <div class="kpi kpi-${tone} reveal">
@@ -132,7 +132,7 @@ function drawCharts(root, monthly, val) {
   if (sales) {
     const ctx = sales.getContext('2d');
     const grad = ctx.createLinearGradient(0, 0, 0, 260);
-    grad.addColorStop(0, '#ffb703');
+    grad.addColorStop(0, '#e09028');
     grad.addColorStop(1, 'rgba(251,133,0,0.15)');
     charts.push(new Chart(sales, {
       type: 'bar',
