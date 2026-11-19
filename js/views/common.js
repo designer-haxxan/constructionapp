@@ -72,12 +72,29 @@ export function mountItemPicker(host, state, onChange) {
 }
 
 // ---------- Paper documents (screen and print) ----------
-export function invoiceDoc(state, inv) {
+// The bill on paper. noRates prints quantities only (a delivery copy): no rate, discount, amount or totals.
+export function invoiceDoc(state, inv, { noRates = false } = {}) {
   const b = state.business;
+  const gross = (l) => l.gross ?? l.total;
   const rows = inv.lines.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(l.product)}</td><td>${esc(l.brand || '—')}</td><td>${esc(l.quality || '—')}</td>
-      <td class="num">${qty(l.qty)} ${esc(l.unit)}</td><td class="num">${money(l.price)}</td><td class="num">${money(l.total)}</td></tr>`).join('');
+      <td class="num">${qty(l.qty)} ${esc(l.unit)}</td>${noRates ? '' : `<td class="num">${money(l.price)}</td><td class="num">${l.discount > 0 ? `− ${money(l.discount)}` : '—'}</td><td class="num">${money(l.total)}</td>`}</tr>`).join('');
   const status = documentStatus(state).get(inv.id);
-  return `<article class="paper invoice">
+  const itemDisc = inv.itemDiscount || 0;
+  const billDisc = inv.billDiscount || 0;
+  const billDiscLabel = inv.billDiscountType === 'pct' && inv.billDiscountValue ? `Less bill discount (${qty(inv.billDiscountValue)}%)` : 'Less bill discount';
+  const totals = noRates ? '' : `<div class="paper-totals">
+      ${itemDisc > 0 ? `<div><span>Items before discount</span><span class="num">${money(inv.lines.reduce((s, l) => s + gross(l), 0))}</span></div>
+      <div><span>Less item discounts</span><span class="num">− ${money(itemDisc)}</span></div>` : ''}
+      ${itemDisc > 0 || billDisc > 0 || inv.freight || inv.labour ? `<div><span>Items</span><span class="num">${money(inv.subtotal ?? inv.amount)}</span></div>` : ''}
+      ${billDisc > 0 ? `<div><span>${esc(billDiscLabel)}</span><span class="num">− ${money(billDisc)}</span></div>` : ''}
+      ${inv.freight ? `<div><span>Freight</span><span class="num">${money(inv.freight)}</span></div>` : ''}
+      ${inv.labour ? `<div><span>Labour charges</span><span class="num">${money(inv.labour)}</span></div>` : ''}
+      <div><span>Amount</span><span class="num">${money(inv.amount)}</span></div>
+      <div><span>Arrears brought forward</span><span class="num">${money(inv.arrears)}</span></div>
+      <div><span>Deposit received</span><span class="num">− ${money(inv.deposit)}</span></div>
+      <div class="grand"><span>Remainder</span><span class="num">${money(inv.remainder)}</span></div>
+    </div>`;
+  return `<article class="paper invoice${noRates ? ' no-rates' : ''}">
     <header class="paper-head">
       <div>
         ${logoImg(b)}
@@ -86,7 +103,7 @@ export function invoiceDoc(state, inv) {
         <div class="paper-addr">${esc(b.address)}<br>${esc(b.city)}<br>Phone ${esc(b.phone)}</div>
       </div>
       <div class="paper-title">
-        <div class="paper-doc">Bill</div>
+        <div class="paper-doc">${noRates ? 'Delivery copy' : 'Bill'}</div>
         <div class="paper-no">${esc(invoiceLabel(state, inv.no))}</div>
         <div class="paper-date">${esc(dateLong(inv.date))}</div>
       </div>
@@ -97,21 +114,13 @@ export function invoiceDoc(state, inv) {
       <div class="paper-status"><div class="label">Status</div>${status ? `<strong>${esc(status.status)}</strong>` : ''}</div>
     </section>
     <table class="paper-table">
-      <thead><tr><th>#</th><th>Product</th><th>Brand</th><th>Quality</th><th class="num">Qty</th><th class="num">Rate</th><th class="num">Total</th></tr></thead>
+      <thead><tr><th>#</th><th>Product</th><th>Brand</th><th>Quality</th><th class="num">Qty</th>${noRates ? '' : '<th class="num">Rate</th><th class="num">Discount</th><th class="num">Total</th>'}</tr></thead>
       <tbody>${rows}</tbody>
     </table>
-    <div class="paper-totals">
-      ${inv.freight || inv.labour ? `<div><span>Items</span><span class="num">${money(inv.subtotal ?? inv.amount)}</span></div>
-      <div><span>Freight</span><span class="num">${money(inv.freight || 0)}</span></div>
-      <div><span>Labour charges</span><span class="num">${money(inv.labour || 0)}</span></div>` : ''}
-      <div><span>Amount</span><span class="num">${money(inv.amount)}</span></div>
-      <div><span>Arrears brought forward</span><span class="num">${money(inv.arrears)}</span></div>
-      <div><span>Deposit received</span><span class="num">− ${money(inv.deposit)}</span></div>
-      <div class="grand"><span>Remainder</span><span class="num">${money(inv.remainder)}</span></div>
-    </div>
+    ${totals}
     <footer class="paper-foot">
       <div class="sig">Seller signature</div><div class="sig">Customer signature</div>
-      <p>All remaining arrears must be paid in full at your earliest convenience. Thank you for your business.</p>
+      <p>${noRates ? 'Quantities delivered as listed. Rates and amounts are on the bill.' : 'All remaining arrears must be paid in full at your earliest convenience. Thank you for your business.'}</p>
     </footer>
   </article>`;
 }

@@ -30,14 +30,26 @@ export const itemName = (it) => [it.product, it.brand, it.quality].filter(Boolea
 export const lineTotal = (qty, price) => round2(num(qty) * num(price));
 export const purchaseTotal = ({ qty, price, freight }) => round2(num(qty) * num(price) + num(freight));
 
-// Bill totals: lines, plus freight and labour charges (both are billed), plus arrears, less the deposit.
-export function invoiceTotals(lines, arrears = 0, deposit = 0, freight = 0, labour = 0) {
+// A discount on an amount: 'pct' is a percentage of the base, 'amt' is a sum in Rs. Never more than the base.
+export function discountOf(base, type, value) {
+  const b = round2(num(base));
+  const v = num(value);
+  if (!(v > 0)) return 0;
+  const d = type === 'pct' ? round2((b * v) / 100) : round2(v);
+  return Math.min(b, Math.max(0, d));
+}
+
+// Bill totals. Items are the lines after their own discounts; the bill discount comes off the items total.
+// Freight and labour charges are added after the discount, and arrears are carried in. Then the deposit is taken off.
+export function invoiceTotals(lines, arrears = 0, deposit = 0, freight = 0, labour = 0, billDiscount = 0) {
   const subtotal = round2(lines.reduce((s, l) => s + num(l.total), 0));
+  const itemDiscount = round2(lines.reduce((s, l) => s + num(l.discount), 0));
+  const bd = round2(num(billDiscount));
   const fr = round2(num(freight));
   const lb = round2(num(labour));
-  const amount = round2(subtotal + fr + lb);
+  const amount = round2(subtotal - bd + fr + lb);
   return {
-    subtotal, freight: fr, labour: lb, amount,
+    subtotal, itemDiscount, billDiscount: bd, freight: fr, labour: lb, amount,
     arrears: round2(num(arrears)), deposit: round2(num(deposit)), remainder: round2(amount + num(arrears) - num(deposit)),
   };
 }
@@ -205,6 +217,46 @@ export function addItem(state, { product, brand = '', quality = '', price = null
   return id;
 }
 
+// Moves one item to a new product, brand, quality or unit. The item id changes with its name, so every bill line,
+// purchase and stock adjustment that used it is moved too (stock and history stay attached).
+function moveItem(state, oldId, next) {
+  const item = state.items.find((i) => i.id === oldId);
+  if (!item) fail('This item is not in the price index.');
+  const id = itemId(next.product, next.brand, next.quality);
+  if (id !== oldId && state.items.some((i) => i.id === id)) fail(`${itemName({ ...next })} is already in the price index.`);
+  Object.assign(item, { id, product: next.product, brand: next.brand, quality: next.quality, unit: next.unit });
+  const names = { itemId: id, product: next.product, brand: next.brand, quality: next.quality, unit: next.unit };
+  for (const inv of state.invoices) for (const l of inv.lines) if (l.itemId === oldId) Object.assign(l, names);
+  for (const p of state.purchases) if (p.itemId === oldId) Object.assign(p, names);
+  for (const a of state.adjustments) if (a.itemId === oldId) a.itemId = id;
+  return id;
+}
+
+// Renames a product and/or changes its unit. Its items, dealers' product lists, bills, purchases and stock follow.
+export function updateProduct(state, oldName, { name, unit }) {
+  const product = state.products.find((p) => p.name === oldName);
+  if (!product) fail('This product is not in the list.');
+  const n = String(name ?? oldName).trim();
+  if (!n) fail('Enter the product name.');
+  if (n.toLowerCase() !== oldName.toLowerCase() && state.products.some((p) => p.name.toLowerCase() === n.toLowerCase())) fail('This product already exists.');
+  const u = String(unit ?? product.unit).trim() || 'Units';
+  for (const it of state.items.filter((i) => i.product === oldName)) {
+    moveItem(state, it.id, { product: n, brand: it.brand, quality: it.quality, unit: u });
+  }
+  product.name = n;
+  product.unit = u;
+  for (const d of state.dealers) if (d.productNames) d.productNames = d.productNames.map((x) => (x === oldName ? n : x));
+  return product;
+}
+
+// Changes the brand and quality of an item. Its price and history stay with it.
+export function updateItem(state, id, { brand = '', quality = '' }) {
+  const item = state.items.find((i) => i.id === id);
+  if (!item) fail('This item is not in the price index.');
+  moveItem(state, id, { product: item.product, brand: String(brand).trim(), quality: String(quality).trim(), unit: item.unit });
+  return state.items.find((i) => i.product === item.product && i.brand === String(brand).trim() && i.quality === String(quality).trim());
+}
+
 export function setPrices(state, changes) {
   for (const { id, price } of changes) {
     const it = state.items.find((x) => x.id === id);
@@ -322,28 +374,53 @@ function cleanBillLines(state, lines) {
     const price = round2(num(l.price));
     if (!(qty > 0)) fail(`Quantity for ${itemName(item)} must be more than zero.`);
     if (price < 0) fail(`Price for ${itemName(item)} cannot be negative.`);
-    return { itemId: item.id, product: item.product, brand: item.brand, quality: item.quality, unit: unitOf(state, item.product), qty, price, total: lineTotal(qty, price) };
+    const gross = lineTotal(qty, price);
+    const discountType = l.discountType === 'pct' ? 'pct' : 'amt';
+    const discountValue = round2(num(l.discountValue));
+    if (discountValue < 0) fail(`Discount for ${itemName(item)} cannot be negative.`);
+    if (discountType === 'pct' && discountValue > 100) fail(`Discount for ${itemName(item)} cannot be more than 100%.`);
+    if (discountType === 'amt' && discountValue > gross + 0.004) fail(`Discount for ${itemName(item)} is more than its amount.`);
+    const discount = discountOf(gross, discountType, discountValue);
+    return {
+      itemId: item.id, product: item.product, brand: item.brand, quality: item.quality, unit: unitOf(state, item.product),
+      qty, price, gross, discountType, discountValue, discount, total: round2(gross - discount),
+    };
   });
 }
+
+// Bill-wise discount, taken off the items total (after the item discounts).
+function billDiscountFor(itemsTotal, type, value) {
+  const v = round2(num(value));
+  if (v < 0) fail('Bill discount cannot be negative.');
+  if (type === 'pct' && v > 100) fail('Bill discount cannot be more than 100%.');
+  if (type === 'amt' && v > itemsTotal + 0.004) fail('Bill discount is more than the items total.');
+  return discountOf(itemsTotal, type, v);
+}
+const discountKind = (t) => (t === 'pct' ? 'pct' : 'amt');
+const itemsTotalOf = (lines) => round2(lines.reduce((s, l) => s + num(l.total), 0));
 
 // The state as it was before a bill and its deposit were written.
 function withoutInvoice(state, id) {
   return { ...state, invoices: state.invoices.filter((i) => i.id !== id), payments: state.payments.filter((p) => !(p.refType === 'invoice' && p.refId === id)) };
 }
 
-export function addInvoice(state, { date, customerId, lines, deposit = 0, depositMethod = 'Cash', freight = 0, labour = 0, createdAt = new Date().toISOString() }) {
+export function addInvoice(state, { date, customerId, lines, deposit = 0, depositMethod = 'Cash', freight = 0, labour = 0, billDiscountType = 'amt', billDiscountValue = 0, createdAt = new Date().toISOString() }) {
   const customer = state.customers.find((c) => c.id === customerId);
   if (!customer) fail('Choose the customer.');
   const clean = cleanBillLines(state, lines);
   const dep = money2(deposit, 'Deposit');
   const fr = money2(freight, 'Freight');
   const lb = money2(labour, 'Labour charges');
+  const bType = discountKind(billDiscountType);
+  const bd = billDiscountFor(itemsTotalOf(clean), bType, billDiscountValue);
   const arrears = customerBalance(state, customerId);
   const no = state.invoice.next;
   state.invoice.next += 1;
   const invoice = {
     id: uid(), no, date: date || localDate(), customerId, customerName: customer.name, contact: customer.contact,
-    address: customer.address, city: customer.city, lines: clean, ...invoiceTotals(clean, arrears, dep, fr, lb), createdAt,
+    address: customer.address, city: customer.city, lines: clean,
+    billDiscountType: bType, billDiscountValue: round2(num(billDiscountValue)),
+    ...invoiceTotals(clean, arrears, dep, fr, lb, bd), createdAt,
   };
   state.invoices.push(invoice);
   setInvoiceDeposit(state, invoice, dep, depositMethod, createdAt);
@@ -351,7 +428,7 @@ export function addInvoice(state, { date, customerId, lines, deposit = 0, deposi
 }
 
 // Rewrites a saved bill. Its number stays the same; arrears are what the customer owed before this bill.
-export function updateInvoice(state, id, { date, customerId, lines, deposit = 0, depositMethod = 'Cash', freight = 0, labour = 0 }) {
+export function updateInvoice(state, id, { date, customerId, lines, deposit = 0, depositMethod = 'Cash', freight = 0, labour = 0, billDiscountType = 'amt', billDiscountValue = 0 }) {
   const inv = state.invoices.find((i) => i.id === id);
   if (!inv) fail('This bill no longer exists.');
   const customer = state.customers.find((c) => c.id === customerId);
@@ -360,10 +437,14 @@ export function updateInvoice(state, id, { date, customerId, lines, deposit = 0,
   const dep = money2(deposit, 'Deposit');
   const fr = money2(freight, 'Freight');
   const lb = money2(labour, 'Labour charges');
+  const bType = discountKind(billDiscountType);
+  const bd = billDiscountFor(itemsTotalOf(clean), bType, billDiscountValue);
   const arrears = customerBalance(withoutInvoice(state, id), customerId);
   Object.assign(inv, {
     date: date || inv.date, customerId, customerName: customer.name, contact: customer.contact,
-    address: customer.address, city: customer.city, lines: clean, ...invoiceTotals(clean, arrears, dep, fr, lb), updatedAt: new Date().toISOString(),
+    address: customer.address, city: customer.city, lines: clean,
+    billDiscountType: bType, billDiscountValue: round2(num(billDiscountValue)),
+    ...invoiceTotals(clean, arrears, dep, fr, lb, bd), updatedAt: new Date().toISOString(),
   });
   setInvoiceDeposit(state, inv, dep, depositMethod, inv.createdAt);
   return inv;

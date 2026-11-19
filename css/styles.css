@@ -675,3 +675,12 @@ select.compact, .select.compact, input.compact { padding: 9px 12px; width: auto;
 .logo-login { width: 176px; background: #fff; border-radius: 14px; padding: 8px 10px; box-shadow: 0 12px 30px -16px rgba(224, 144, 40, .55); }
 .logo-side { width: 132px; background: #fff; border-radius: 10px; padding: 5px 7px; }
 .paper-logo { display: block; width: 190px; height: auto; margin-bottom: 8px; }
+
+/* ---------- Discounts (item-wise and bill-wise) ---------- */
+.discount-input { display: flex; gap: 6px; align-items: center; }
+.discount-input .select { width: 78px; flex: none; }
+.discount-input input { min-width: 0; flex: 1; }
+.totals-input .discount-input { width: 230px; }
+.totals-input .discount-input input { width: 110px; text-align: right; font-weight: 600; }
+.totals-input .discount-input .select { width: 70px; }
+.paper.no-rates .paper-table td.num { text-align: right; }

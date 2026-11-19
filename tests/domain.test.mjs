@@ -4,6 +4,8 @@ import assert from 'node:assert/strict';
 import * as D from '../js/domain.js';
 import { seedState } from '../js/seed.js';
 
+const round2 = (n) => Math.round(n * 100) / 100;
+
 const fresh = () => seedState('2026-01-01T00:00:00.000Z');
 const cust = (s, name) => s.customers.find((c) => c.name === name);
 const dealer = (s, name) => s.dealers.find((d) => d.name === name);
@@ -235,4 +237,61 @@ test('Migration: old purchases with Rent get Freight added to the total', () => 
   assert.equal(p.freight, 500);
   assert.equal(p.total, 10500);
   assert.equal(p.rent, undefined);
+});
+
+test('Bill: item discount (Rs or %) comes off its line, bill discount comes off the items, freight is added after', () => {
+  const s = fresh();
+  const c = cust(s, 'Hannan Mir');
+  const paidar = item(s, 'Cement', 'Paidar');
+  const lucky = item(s, 'Cement', 'Lucky');
+  const inv = D.addInvoice(s, {
+    date: '2026-07-03', customerId: c.id, freight: 300,
+    lines: [
+      { itemId: paidar.id, qty: 10, price: 1000, discountType: 'pct', discountValue: 10 },
+      { itemId: lucky.id, qty: 5, price: 200, discountType: 'amt', discountValue: 100 },
+    ],
+    billDiscountType: 'pct', billDiscountValue: 5,
+  });
+  assert.equal(inv.lines[0].total, 9000);
+  assert.equal(inv.lines[1].total, 900);
+  assert.equal(inv.subtotal, 9900);
+  assert.equal(inv.itemDiscount, 1100);
+  assert.equal(inv.billDiscount, 495);
+  assert.equal(inv.amount, 9705, 'items 9900 − bill discount 495 + freight 300');
+  assert.equal(D.customerBalance(s, c.id), round2(c.opening) + 9705, 'opening balance + the bill');
+});
+
+test('Bill: discounts are checked (no more than 100%, no more than the items total)', () => {
+  const s = fresh();
+  const c = cust(s, 'Hannan Mir');
+  const paidar = item(s, 'Cement', 'Paidar');
+  const line = [{ itemId: paidar.id, qty: 10, price: 1000 }];
+  assert.throws(() => D.addInvoice(s, { customerId: c.id, lines: [{ ...line[0], discountType: 'pct', discountValue: 150 }] }), /100%/);
+  assert.throws(() => D.addInvoice(s, { customerId: c.id, lines: line, billDiscountType: 'amt', billDiscountValue: 20000 }), /more than the items total/);
+  assert.throws(() => D.addInvoice(s, { customerId: c.id, lines: [{ ...line[0], discountType: 'amt', discountValue: 20000 }] }), /more than its amount/);
+});
+
+test('Edit products & qualities: renaming follows bills, purchases, stock and dealer product lists', () => {
+  const s = fresh();
+  const d = dealer(s, 'Sadaat');
+  const paidar = item(s, 'Cement', 'Paidar');
+  D.addPurchase(s, { date: '2026-07-01', dealerId: d.id, itemId: paidar.id, qty: 100, price: 1000 });
+  const c = cust(s, 'Hannan Mir');
+  D.addInvoice(s, { date: '2026-07-02', customerId: c.id, lines: [{ itemId: paidar.id, qty: 10, price: 1200 }] });
+  D.updateItem(s, paidar.id, { brand: 'Paidar', quality: 'Super' });
+  const moved = item(s, 'Cement', 'Paidar', 'Super');
+  assert.ok(moved, 'item id follows its name');
+  assert.equal(s.invoices[0].lines[0].itemId, moved.id);
+  assert.equal(s.purchases[0].itemId, moved.id);
+  assert.equal(D.stockByItem(s).get(moved.id), 90, 'stock follows the item');
+  assert.throws(() => D.updateItem(s, moved.id, { brand: 'Lucky', quality: '' }), /already/);
+  D.updateProduct(s, 'Cement', { name: 'Cement Bag', unit: 'Bag' });
+  const renamed = item(s, 'Cement Bag', 'Paidar', 'Super');
+  assert.equal(renamed.unit, 'Bag');
+  assert.equal(s.purchases[0].product, 'Cement Bag');
+  assert.equal(s.purchases[0].unit, 'Bag');
+  assert.equal(s.invoices[0].lines[0].product, 'Cement Bag');
+  assert.equal(D.stockByItem(s).get(renamed.id), 90);
+  assert.ok(d.productNames.includes('Cement Bag'), 'dealer list follows the product name');
+  assert.throws(() => D.updateProduct(s, 'Cement Bag', { name: 'Steel' }), /already exists/);
 });

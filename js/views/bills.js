@@ -1,7 +1,7 @@
 // Sales bills (the Bill sheet): the bill register, the bill builder (new and editing) and the printable invoice.
 import * as store from '../store.js';
 import { esc, money, qty, dateLong, todayIso, icon, pill, confirmBox, toast, toastError, countUp, printHtml } from '../ui.js';
-import { addInvoice, updateInvoice, deleteInvoice, documentStatus, arrearsFor, invoiceLabel, stockByItem, stockShortages, lineTotal, round2, num, itemName } from '../domain.js';
+import { addInvoice, updateInvoice, deleteInvoice, documentStatus, arrearsFor, invoiceLabel, stockByItem, stockShortages, lineTotal, discountOf, round2, num, itemName } from '../domain.js';
 import { mountItemPicker, invoiceDoc, partyOptions } from './common.js';
 import { customerForm } from './parties.js';
 
@@ -59,7 +59,7 @@ function newBill(root, ctx, editId) {
     return;
   }
   const exDeposit = ex ? s.payments.find((p) => p.refType === 'invoice' && p.refId === ex.id) : null;
-  const lines = ex ? ex.lines.map((l) => ({ ...l, hue: '#e09028' })) : [];
+  const lines = ex ? ex.lines.map((l) => ({ ...l, discountType: l.discountType || 'amt', discountValue: l.discountValue || 0, hue: '#e09028' })) : [];
   let customerId = ex?.customerId || '';
   let picker = null;
 
@@ -84,7 +84,12 @@ function newBill(root, ctx, editId) {
           <div class="add-line">
             <label class="field"><span>Quantity</span><input type="number" min="0" step="any" inputmode="decimal" id="bill-qty" placeholder="0"></label>
             <label class="field"><span>Rate (Rs)</span><input type="number" min="0" step="any" inputmode="decimal" id="bill-price" placeholder="0"></label>
-            <div class="field"><span>Line total</span><div class="readout" id="bill-line-total">${money(0)}</div></div>
+            <div class="field"><span>Item discount</span>
+              <div class="discount-input">
+                <select class="select" id="bill-line-dtype" aria-label="Item discount type"><option value="amt">Rs</option><option value="pct">%</option></select>
+                <input type="number" min="0" step="any" inputmode="decimal" id="bill-line-dval" placeholder="0" aria-label="Item discount">
+              </div></div>
+            <div class="field"><span>Line total <em id="bill-line-gross"></em></span><div class="readout" id="bill-line-total">${money(0)}</div></div>
             <button class="btn btn-primary" id="bill-add" type="button"><i class="bi bi-plus-lg"></i> Add item</button>
           </div>
           <div class="hint" id="bill-stock-hint"></div>
@@ -97,7 +102,13 @@ function newBill(root, ctx, editId) {
           <div class="lines" id="bill-lines"></div>
         </section>
         <section class="card totals reveal">
-          <div class="totals-row"><span>Items</span><strong class="num" id="t-items">${money(0)}</strong></div>
+          <div class="totals-row"><span>Items (after item discounts)</span><strong class="num" id="t-items">${money(0)}</strong></div>
+          <label class="totals-row totals-input"><span>Bill discount</span>
+            <span class="discount-input">
+              <select class="select compact" id="bill-dtype" aria-label="Bill discount type"><option value="amt">Rs</option><option value="pct">%</option></select>
+              <input type="number" min="0" step="any" inputmode="decimal" id="bill-dval" value="${ex ? esc(ex.billDiscountValue || 0) : 0}" aria-label="Bill discount">
+            </span></label>
+          <div class="totals-row"><span>Less bill discount</span><strong class="num" id="t-bdisc">${money(0)}</strong></div>
           <label class="totals-row totals-input"><span>Freight (Rs)</span><input type="number" min="0" step="any" inputmode="decimal" id="bill-freight" value="${ex ? esc(ex.freight || 0) : 0}" aria-label="Freight"></label>
           <label class="totals-row totals-input"><span>Labour charges (Rs)</span><input type="number" min="0" step="any" inputmode="decimal" id="bill-labour" value="${ex ? esc(ex.labour || 0) : 0}" aria-label="Labour charges"></label>
           <div class="totals-row"><span>Amount</span><strong class="num" id="t-amount">${money(0)}</strong></div>
@@ -131,18 +142,26 @@ function newBill(root, ctx, editId) {
     hint.classList.toggle('bad', have <= 0);
   }
 
+  // A line: quantity × rate, less its own discount (Rs or %). Same rule as the domain uses when the bill is saved.
+  const calcLine = (q, p, dtype, dval) => {
+    const gross = lineTotal(q, p);
+    const discount = discountOf(gross, dtype, dval);
+    return { gross, discount, total: round2(gross - discount) };
+  };
   function updateLineTotal() {
-    $('#bill-line-total').textContent = money(lineTotal($('#bill-qty').value, $('#bill-price').value));
+    const c = calcLine(num($('#bill-qty').value), num($('#bill-price').value), $('#bill-line-dtype').value, $('#bill-line-dval').value);
+    $('#bill-line-total').textContent = money(c.total);
+    $('#bill-line-gross').textContent = c.discount > 0 ? `(after ${money(c.discount)} off)` : '';
   }
-  $('#bill-qty').addEventListener('input', updateLineTotal);
-  $('#bill-price').addEventListener('input', updateLineTotal);
+  ['#bill-qty', '#bill-price', '#bill-line-dtype', '#bill-line-dval'].forEach((sel) => $(sel).addEventListener('input', updateLineTotal));
+  $('#bill-line-dtype').addEventListener('change', updateLineTotal);
 
   const itemsOf = () => round2(lines.reduce((a, l) => a + l.total, 0));
   function drawLines() {
     const box = $('#bill-lines');
     box.innerHTML = lines.length
       ? lines.map((l, i) => `<div class="line" style="--hue:${l.hue}">
-          <div class="line-main"><div class="strong">${esc(itemName(l))}</div><div class="muted small">${qty(l.qty)} ${esc(l.unit)} × ${money(l.price)}</div></div>
+          <div class="line-main"><div class="strong">${esc(itemName(l))}</div><div class="muted small">${qty(l.qty)} ${esc(l.unit)} × ${money(l.price)}${l.discount > 0 ? ` · discount ${money(l.discount)}` : ''}</div></div>
           <div class="line-total num">${money(l.total)}</div>
           <button class="icon-btn" data-rm="${i}" aria-label="Remove line" type="button">${icon('x-lg')}</button></div>`).join('')
       : `<div class="empty-mini">No items yet. Pick a product on the left, then add it.</div>`;
@@ -155,9 +174,11 @@ function newBill(root, ctx, editId) {
     const cust = customerId ? store.get().customers.find((c) => c.id === customerId) : null;
     const arrears = cust ? arrearsFor(store.get(), cust.id, ex?.id || null) : 0;
     const items = itemsOf();
+    const bd = discountOf(items, $('#bill-dtype').value, $('#bill-dval').value);
     const fr = round2(num($('#bill-freight').value));
     const lb = round2(num($('#bill-labour').value));
-    const amount = round2(items + fr + lb);
+    const amount = round2(items - bd + fr + lb);
+    $('#t-bdisc').textContent = `− ${money(bd)}`;
     const dep = round2(num($('#bill-deposit').value));
     const remainder = round2(amount + arrears - dep);
     const over = dep > amount + arrears + 0.004;
@@ -172,7 +193,12 @@ function newBill(root, ctx, editId) {
     note.classList.toggle('bad', over);
   }
 
-  ['#bill-deposit', '#bill-freight', '#bill-labour'].forEach((sel) => $(sel).addEventListener('input', drawTotals));
+  ['#bill-deposit', '#bill-freight', '#bill-labour', '#bill-dval'].forEach((sel) => $(sel).addEventListener('input', drawTotals));
+  $('#bill-dtype').addEventListener('change', drawTotals);
+  if (ex) {
+    $('#bill-dtype').value = ex.billDiscountType || 'amt';
+    $('#bill-line-dtype').value = 'amt';
+  }
 
   function showCustomer() {
     const c = customerId ? store.get().customers.find((x) => x.id === customerId) : null;
@@ -204,10 +230,15 @@ function newBill(root, ctx, editId) {
     if (!it) return toast('Pick a product first.', 'warn');
     if (!(q > 0)) return toast('Enter the quantity.', 'warn');
     if (p === '' || num(p) < 0) return toast('Enter the rate.', 'warn');
-    lines.push({ itemId: it.id, product: it.product, brand: it.brand, quality: it.quality, unit: it.unit, qty: q, price: num(p), total: lineTotal(q, p), hue: '#e09028' });
+    const dtype = $('#bill-line-dtype').value;
+    const dval = num($('#bill-line-dval').value);
+    const c = calcLine(q, num(p), dtype, dval);
+    lines.push({ itemId: it.id, product: it.product, brand: it.brand, quality: it.quality, unit: it.unit, qty: q, price: num(p), discountType: dtype, discountValue: dval, gross: c.gross, discount: c.discount, total: c.total, hue: '#e09028' });
     $('#bill-qty').value = '';
     picker.reset();
     $('#bill-price').value = '';
+    $('#bill-line-dval').value = '';
+    updateLineTotal();
     $('#bill-stock-hint').textContent = '';
     updateLineTotal();
     drawLines();
@@ -239,7 +270,9 @@ function newBill(root, ctx, editId) {
       const values = {
         date: $('#bill-date').value || todayIso(),
         customerId,
-        lines: lines.map((l) => ({ itemId: l.itemId, qty: l.qty, price: l.price })),
+        lines: lines.map((l) => ({ itemId: l.itemId, qty: l.qty, price: l.price, discountType: l.discountType, discountValue: l.discountValue })),
+        billDiscountType: $('#bill-dtype').value,
+        billDiscountValue: num($('#bill-dval').value),
         deposit: num($('#bill-deposit').value),
         depositMethod: exDeposit?.method || 'Cash',
         freight: num($('#bill-freight').value),
@@ -284,6 +317,7 @@ function invoiceView(root, id) {
       <div class="page-actions">
         <button class="btn btn-danger-ghost" id="inv-del" type="button"><i class="bi bi-trash3"></i> Delete</button>
         <a class="btn btn-ghost" href="#/bills/${esc(inv.id)}/edit"><i class="bi bi-pencil"></i> Edit</a>
+        <button class="btn btn-ghost" id="inv-print-plain" type="button" title="Quantities only, no rates or amounts"><i class="bi bi-truck"></i> Print without rates</button>
         <button class="btn btn-accent" id="inv-print" type="button"><i class="bi bi-printer"></i> Print</button>
       </div>
     </div>
@@ -291,8 +325,9 @@ function invoiceView(root, id) {
       <div class="invoice-status">${pill(st?.status || 'Unpaid')} <span class="muted small">Paid ${money(st?.paid || 0)} of ${money(inv.amount)}</span></div>
       ${invoiceDoc(s, inv)}
     </div>`;
-  const print = () => printHtml(invoiceDoc(store.get(), store.get().invoices.find((i) => i.id === id)));
-  root.querySelector('#inv-print').addEventListener('click', print);
+  const print = (noRates = false) => printHtml(invoiceDoc(store.get(), store.get().invoices.find((i) => i.id === id), { noRates }));
+  root.querySelector('#inv-print').addEventListener('click', () => print(false));
+  root.querySelector('#inv-print-plain').addEventListener('click', () => print(true));
   root.querySelector('#inv-del').addEventListener('click', async () => {
     const ok = await confirmBox(`Delete ${invoiceLabel(s, inv.no)}? Its deposit is removed from the ledger too. This cannot be undone.`, { okLabel: 'Delete bill', danger: true });
     if (!ok) return;
@@ -304,6 +339,6 @@ function invoiceView(root, id) {
   });
   if (sessionStorage.getItem('autoPrint') === id) {
     sessionStorage.removeItem('autoPrint');
-    setTimeout(print, 450);
+    setTimeout(() => print(false), 450);
   }
 }

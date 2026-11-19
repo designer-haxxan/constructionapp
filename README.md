@@ -4,10 +4,11 @@ A ledger app for a building-materials business (cement, steel, bricks, sand, agg
 "Data Entry Form Shakeel Sons" workbook.
 
 - **Purchases** from dealers, as on the workbook's *Form* sheet: Qty × Price + Freight, with payment method (including Credit), "paid now", editing and a printable purchase invoice.
-- **Sales bills** to customers, as on the *Bill* sheet: items, freight and labour charges, arrears from the ledger, deposit, remainder, editing and print.
+- **Sales bills** to customers, as on the *Bill* sheet: items with item-wise discounts (Rs or %), a bill-wise discount, freight and labour charges, arrears from the ledger, deposit, remainder, editing, print, and a delivery copy without rates or amounts.
 - **Customer ledgers** and **dealer ledgers**: a running balance per party, payments that settle the oldest items first,
   statements (print and CSV).
 - **Stock** on hand by product, brand and quality, valued at the **price index**; stock movements and adjustments.
+- **Products and qualities** can be renamed in the price index. Bills, purchases, stock and dealer product lists follow the new name.
 - **Reports**: sales, purchases, receivables ageing, dealer payables and stock valuation, each with a date range, charts, print and CSV.
 - **Sign-in** through the eposwala login API (the same account system as before).
 
@@ -43,6 +44,7 @@ Once signed in, the ledger works offline.
 - **Entry types** on a purchase: *Purchasing* adds stock and owes the dealer; *Trading* is recorded on the ledger only.
   Selling is done from bills. Older *Selling* entries still count against stock.
 - **Credit** on a purchase means nothing is paid now: the amount stays on the dealer ledger and no payment entry is made.
+- **Discounts** on a bill: each item's discount is taken off its line. The bill discount is taken off the items total. Freight and labour are added after the discount, and the deposit is taken off last.
 - **Dealers** in the purchase form are only the dealers whose profile lists the chosen product.
 - **Settlement**: a payment clears the oldest open item first (opening balance, then bills or purchases by date).
   A bill's status (Paid / Partly paid / Unpaid) follows from that.
