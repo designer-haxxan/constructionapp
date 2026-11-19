@@ -1,6 +1,6 @@
 // Offline shell for the materials ledger. Ledger data lives in IndexedDB on the device, not in this cache.
 // Bump VERSION whenever a file in SHELL changes so installed copies pick up the new files.
-const VERSION = 'materials-ledger-v2.0.2';
+const VERSION = 'materials-ledger-v2.0.3';
 const SHELL = [
   './', './index.html', './manifest.json', './icon.svg', './img/logo.png', './css/styles.css',
   './js/main.js', './js/store.js', './js/auth.js', './js/ui.js', './js/domain.js', './js/seed.js',
@@ -38,16 +38,34 @@ self.addEventListener('fetch', (event) => {
   const sameOrigin = url.origin === self.location.origin;
   const isCdn = CDN.includes(req.url) || url.hostname === 'fonts.gstatic.com' || url.hostname === 'fonts.googleapis.com';
   if (!sameOrigin && !isCdn) return; // never cache the sign-in API
-  event.respondWith((async () => {
-    const cache = await caches.open(VERSION);
-    const hit = await cache.match(req, { ignoreSearch: sameOrigin });
-    if (hit) return hit;
-    try {
-      const res = await fetch(req);
-      if (res.ok && (sameOrigin || isCdn)) cache.put(req, res.clone());
-      return res;
-    } catch {
-      return cache.match('./index.html');
-    }
-  })());
+  event.respondWith(sameOrigin ? networkFirst(req) : cacheFirst(req));
 });
+
+// The app's own files always come from the network when it is reachable, so a page never mixes an old file
+// with a new one (GitHub Pages allows browsers to reuse a file for 10 minutes). The cache is the offline fallback.
+async function networkFirst(req) {
+  const cache = await caches.open(VERSION);
+  try {
+    const res = await fetch(req, { cache: 'no-cache' });
+    if (res.ok) cache.put(req, res.clone());
+    return res;
+  } catch {
+    const hit = await cache.match(req, { ignoreSearch: true });
+    if (hit) return hit;
+    return (req.mode === 'navigate' ? cache.match('./index.html') : null) || Response.error();
+  }
+}
+
+// Third-party libraries and fonts are versioned by URL, so the cache can answer first.
+async function cacheFirst(req) {
+  const cache = await caches.open(VERSION);
+  const hit = await cache.match(req);
+  if (hit) return hit;
+  try {
+    const res = await fetch(req);
+    if (res.ok) cache.put(req, res.clone());
+    return res;
+  } catch {
+    return Response.error();
+  }
+}

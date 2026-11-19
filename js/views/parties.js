@@ -61,8 +61,9 @@ function detail(root, kind, id, ctx) {
   if (!party) { root.innerHTML = `<div class="empty"><p>This ${L.one} no longer exists.</p><a class="btn btn-ghost" href="${L.list}">Back</a></div>`; return; }
   const led = ledger(s, kind, id);
   const bal = L.balance(s, id);
-  const billed = led.totals.debit;
-  const settled = led.totals.credit;
+  // Customers: debits are bills and credits are receipts. Dealers: credits are purchases and debits are payments.
+  const billed = kind === 'customer' ? led.totals.debit : led.totals.credit;
+  const settled = kind === 'customer' ? led.totals.credit : led.totals.debit;
   root.innerHTML = `
     <div class="page-head">
       <div class="page-actions"><a class="btn btn-ghost" href="${L.list}"><i class="bi bi-arrow-left"></i> ${L.many}</a></div>

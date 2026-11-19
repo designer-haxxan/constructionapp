@@ -108,7 +108,16 @@ async function route() {
     window.scrollTo(0, 0);
   } catch (e) {
     console.error(e);
-    if (token === renderToken) view.innerHTML = `<div class="empty"><div class="empty-icon">${icon('exclamation-octagon')}</div><p>${esc(e.message || String(e))}</p></div>`;
+    if (token !== renderToken) return;
+    // A module error here usually means this copy mixes files from two versions: a reload fetches the matching set.
+    const stale = /does not provide an export|Failed to fetch dynamically imported|Importing a module script failed|export named/i.test(e.message || '');
+    view.innerHTML = `<div class="empty"><div class="empty-icon">${icon('exclamation-octagon')}</div>
+      <p>${stale ? 'This copy of the app is out of date. Reload to get the latest version.' : esc(e.message || String(e))}</p>
+      ${stale ? `<button class="btn btn-accent" id="reload-app" type="button"><i class="bi bi-arrow-clockwise"></i> Reload app</button>` : ''}</div>`;
+    view.querySelector('#reload-app')?.addEventListener('click', async () => {
+      try { for (const k of await caches.keys()) await caches.delete(k); } catch { /* no cache API */ }
+      location.reload();
+    });
   }
 }
 
