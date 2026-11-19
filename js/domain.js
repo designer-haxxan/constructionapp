@@ -301,6 +301,20 @@ export function migrateState(state) {
     }
     delete p.rent;
   }
+  // Bill lines saved before per-unit discounts: an item discount was a Rs amount for the whole line.
+  // It becomes Rs per unit. The saved line total is kept as it was.
+  for (const inv of state.invoices || []) {
+    for (const l of inv.lines || []) {
+      if (l.netRate !== undefined) continue;
+      const q = num(l.qty);
+      if (l.discountType === 'amt' && num(l.discountValue) > 0 && q > 0) l.discountValue = round2(num(l.discountValue) / q);
+      l.discountType = discountKind(l.discountType);
+      l.discountValue = round2(num(l.discountValue));
+      l.gross = lineTotal(q, l.price);
+      l.discount = round2(l.gross - num(l.total));
+      l.netRate = round2(num(l.price) - discountOf(l.price, l.discountType, l.discountValue));
+    }
+  }
   return state;
 }
 
@@ -374,18 +388,29 @@ function cleanBillLines(state, lines) {
     const price = round2(num(l.price));
     if (!(qty > 0)) fail(`Quantity for ${itemName(item)} must be more than zero.`);
     if (price < 0) fail(`Price for ${itemName(item)} cannot be negative.`);
-    const gross = lineTotal(qty, price);
-    const discountType = l.discountType === 'pct' ? 'pct' : 'amt';
+    const discountType = discountKind(l.discountType);
     const discountValue = round2(num(l.discountValue));
     if (discountValue < 0) fail(`Discount for ${itemName(item)} cannot be negative.`);
     if (discountType === 'pct' && discountValue > 100) fail(`Discount for ${itemName(item)} cannot be more than 100%.`);
-    if (discountType === 'amt' && discountValue > gross + 0.004) fail(`Discount for ${itemName(item)} is more than its amount.`);
-    const discount = discountOf(gross, discountType, discountValue);
+    if (discountType === 'amt' && discountValue > price + 0.004) fail(`Discount for ${itemName(item)} is more than its rate.`);
+    const f = lineFigures(qty, price, discountType, discountValue);
     return {
       itemId: item.id, product: item.product, brand: item.brand, quality: item.quality, unit: unitOf(state, item.product),
-      qty, price, gross, discountType, discountValue, discount, total: round2(gross - discount),
+      qty, price, discountType, discountValue, netRate: f.netRate, gross: f.gross, discount: f.discount, total: f.total,
     };
   });
+}
+
+// An item discount comes off each unit's rate: Rs per unit ('amt') or a percentage of the rate ('pct').
+// Returns the figures for one bill line.
+export function lineFigures(qty, price, discountType, discountValue) {
+  const q = round3(num(qty));
+  const p = round2(num(price));
+  const perUnit = discountOf(p, discountKind(discountType), discountValue);
+  const netRate = round2(p - perUnit);
+  const gross = lineTotal(q, p);
+  const total = round2(q * netRate);
+  return { perUnit, netRate, gross, total, discount: round2(gross - total) };
 }
 
 // Bill-wise discount, taken off the items total (after the item discounts).

@@ -1,7 +1,7 @@
 // Sales bills (the Bill sheet): the bill register, the bill builder (new and editing) and the printable invoice.
 import * as store from '../store.js';
 import { esc, money, qty, dateLong, todayIso, icon, pill, confirmBox, toast, toastError, countUp, printHtml } from '../ui.js';
-import { addInvoice, updateInvoice, deleteInvoice, documentStatus, arrearsFor, invoiceLabel, stockByItem, stockShortages, lineTotal, discountOf, round2, num, itemName } from '../domain.js';
+import { addInvoice, updateInvoice, deleteInvoice, documentStatus, arrearsFor, invoiceLabel, stockByItem, stockShortages, lineTotal, discountOf, lineFigures, round2, num, itemName } from '../domain.js';
 import { mountItemPicker, invoiceDoc, partyOptions } from './common.js';
 import { customerForm } from './parties.js';
 
@@ -84,7 +84,7 @@ function newBill(root, ctx, editId) {
           <div class="add-line">
             <label class="field"><span>Quantity</span><input type="number" min="0" step="any" inputmode="decimal" id="bill-qty" placeholder="0"></label>
             <label class="field"><span>Rate (Rs)</span><input type="number" min="0" step="any" inputmode="decimal" id="bill-price" placeholder="0"></label>
-            <div class="field"><span>Item discount</span>
+            <div class="field"><span>Discount on rate</span>
               <div class="discount-input">
                 <select class="select" id="bill-line-dtype" aria-label="Item discount type"><option value="amt">Rs</option><option value="pct">%</option></select>
                 <input type="number" min="0" step="any" inputmode="decimal" id="bill-line-dval" placeholder="0" aria-label="Item discount">
@@ -142,16 +142,12 @@ function newBill(root, ctx, editId) {
     hint.classList.toggle('bad', have <= 0);
   }
 
-  // A line: quantity × rate, less its own discount (Rs or %). Same rule as the domain uses when the bill is saved.
-  const calcLine = (q, p, dtype, dval) => {
-    const gross = lineTotal(q, p);
-    const discount = discountOf(gross, dtype, dval);
-    return { gross, discount, total: round2(gross - discount) };
-  };
+  // A line: the discount comes off each unit's rate (Rs per unit or % of the rate). Same rule as the domain uses on save.
+  const calcLine = (q, p, dtype, dval) => lineFigures(q, p, dtype, dval);
   function updateLineTotal() {
     const c = calcLine(num($('#bill-qty').value), num($('#bill-price').value), $('#bill-line-dtype').value, $('#bill-line-dval').value);
     $('#bill-line-total').textContent = money(c.total);
-    $('#bill-line-gross').textContent = c.discount > 0 ? `(after ${money(c.discount)} off)` : '';
+    $('#bill-line-gross').textContent = c.perUnit > 0 ? `(rate ${money(c.netRate)} after ${money(c.perUnit)} off)` : '';
   }
   ['#bill-qty', '#bill-price', '#bill-line-dtype', '#bill-line-dval'].forEach((sel) => $(sel).addEventListener('input', updateLineTotal));
   $('#bill-line-dtype').addEventListener('change', updateLineTotal);
@@ -161,7 +157,7 @@ function newBill(root, ctx, editId) {
     const box = $('#bill-lines');
     box.innerHTML = lines.length
       ? lines.map((l, i) => `<div class="line" style="--hue:${l.hue}">
-          <div class="line-main"><div class="strong">${esc(itemName(l))}</div><div class="muted small">${qty(l.qty)} ${esc(l.unit)} × ${money(l.price)}${l.discount > 0 ? ` · discount ${money(l.discount)}` : ''}</div></div>
+          <div class="line-main"><div class="strong">${esc(itemName(l))}</div><div class="muted small">${qty(l.qty)} ${esc(l.unit)} × ${money(l.price)}${l.netRate < l.price ? ` − ${money(l.price - l.netRate)} = ${money(l.netRate)}` : ''}</div></div>
           <div class="line-total num">${money(l.total)}</div>
           <button class="icon-btn" data-rm="${i}" aria-label="Remove line" type="button">${icon('x-lg')}</button></div>`).join('')
       : `<div class="empty-mini">No items yet. Pick a product on the left, then add it.</div>`;
@@ -233,7 +229,7 @@ function newBill(root, ctx, editId) {
     const dtype = $('#bill-line-dtype').value;
     const dval = num($('#bill-line-dval').value);
     const c = calcLine(q, num(p), dtype, dval);
-    lines.push({ itemId: it.id, product: it.product, brand: it.brand, quality: it.quality, unit: it.unit, qty: q, price: num(p), discountType: dtype, discountValue: dval, gross: c.gross, discount: c.discount, total: c.total, hue: '#e09028' });
+    lines.push({ itemId: it.id, product: it.product, brand: it.brand, quality: it.quality, unit: it.unit, qty: q, price: num(p), discountType: dtype, discountValue: dval, netRate: c.netRate, gross: c.gross, discount: c.discount, total: c.total, hue: '#e09028' });
     $('#bill-qty').value = '';
     picker.reset();
     $('#bill-price').value = '';

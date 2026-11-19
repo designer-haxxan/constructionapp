@@ -253,12 +253,13 @@ test('Bill: item discount (Rs or %) comes off its line, bill discount comes off 
     billDiscountType: 'pct', billDiscountValue: 5,
   });
   assert.equal(inv.lines[0].total, 9000);
-  assert.equal(inv.lines[1].total, 900);
-  assert.equal(inv.subtotal, 9900);
-  assert.equal(inv.itemDiscount, 1100);
-  assert.equal(inv.billDiscount, 495);
-  assert.equal(inv.amount, 9705, 'items 9900 − bill discount 495 + freight 300');
-  assert.equal(D.customerBalance(s, c.id), round2(c.opening) + 9705, 'opening balance + the bill');
+  assert.equal(inv.lines[1].netRate, 100, 'Rs 100 comes off each unit of the Rs 200 rate');
+  assert.equal(inv.lines[1].total, 500);
+  assert.equal(inv.subtotal, 9500);
+  assert.equal(inv.itemDiscount, 1500);
+  assert.equal(inv.billDiscount, 475);
+  assert.equal(inv.amount, 9325, 'items 9500 − bill discount 475 + freight 300');
+  assert.equal(D.customerBalance(s, c.id), round2(c.opening) + 9325, 'opening balance + the bill');
 });
 
 test('Bill: discounts are checked (no more than 100%, no more than the items total)', () => {
@@ -268,7 +269,7 @@ test('Bill: discounts are checked (no more than 100%, no more than the items tot
   const line = [{ itemId: paidar.id, qty: 10, price: 1000 }];
   assert.throws(() => D.addInvoice(s, { customerId: c.id, lines: [{ ...line[0], discountType: 'pct', discountValue: 150 }] }), /100%/);
   assert.throws(() => D.addInvoice(s, { customerId: c.id, lines: line, billDiscountType: 'amt', billDiscountValue: 20000 }), /more than the items total/);
-  assert.throws(() => D.addInvoice(s, { customerId: c.id, lines: [{ ...line[0], discountType: 'amt', discountValue: 20000 }] }), /more than its amount/);
+  assert.throws(() => D.addInvoice(s, { customerId: c.id, lines: [{ ...line[0], discountType: 'amt', discountValue: 20000 }] }), /more than its rate/);
 });
 
 test('Edit products & qualities: renaming follows bills, purchases, stock and dealer product lists', () => {
@@ -294,4 +295,27 @@ test('Edit products & qualities: renaming follows bills, purchases, stock and de
   assert.equal(D.stockByItem(s).get(renamed.id), 90);
   assert.ok(d.productNames.includes('Cement Bag'), 'dealer list follows the product name');
   assert.throws(() => D.updateProduct(s, 'Cement Bag', { name: 'Steel' }), /already exists/);
+});
+
+test('Item discount: Rs is taken off each unit of the rate, % is taken off the rate', () => {
+  const rs = D.lineFigures(4, 1000, 'amt', 50);
+  assert.deepEqual([rs.netRate, rs.total, rs.discount], [950, 3800, 200]);
+  const pct = D.lineFigures(4, 1000, 'pct', 10);
+  assert.deepEqual([pct.netRate, pct.total, pct.discount], [900, 3600, 400]);
+});
+
+test('Migration: an older Rs line discount (for the whole line) becomes Rs per unit and keeps its saved total', () => {
+  const s = fresh();
+  const c = cust(s, 'Hannan Mir');
+  s.invoices.push({ id: 'old', no: 1, date: '2026-07-01', customerId: c.id, customerName: c.name, lines: [
+    { itemId: 'Cement|Paidar|', product: 'Cement', qty: 5, price: 200, unit: 'Bags', discountType: 'amt', discountValue: 100, discount: 100, total: 900 },
+    { itemId: 'Cement|Lucky|', product: 'Cement', qty: 2, price: 300, unit: 'Bags', total: 600 },
+  ], amount: 1500, arrears: 0, deposit: 0, remainder: 1500, createdAt: '2026-07-01T00:00:00.000Z' });
+  D.migrateState(s);
+  const [a, b] = s.invoices.at(-1).lines;
+  assert.equal(a.discountValue, 20);
+  assert.equal(a.netRate, 180);
+  assert.equal(a.total, 900, 'saved total is kept');
+  assert.equal(b.netRate, 300);
+  assert.equal(b.discount, 0);
 });

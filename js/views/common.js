@@ -77,7 +77,7 @@ export function invoiceDoc(state, inv, { noRates = false } = {}) {
   const b = state.business;
   const gross = (l) => l.gross ?? l.total;
   const rows = inv.lines.map((l, i) => `<tr><td>${i + 1}</td><td>${esc(l.product)}</td><td>${esc(l.brand || '—')}</td><td>${esc(l.quality || '—')}</td>
-      <td class="num">${qty(l.qty)} ${esc(l.unit)}</td>${noRates ? '' : `<td class="num">${money(l.price)}</td><td class="num">${l.discount > 0 ? `− ${money(l.discount)}` : '—'}</td><td class="num">${money(l.total)}</td>`}</tr>`).join('');
+      <td class="num">${qty(l.qty)} ${esc(l.unit)}</td>${noRates ? '' : `<td class="num">${money(l.price)}</td><td class="num">${l.netRate < l.price ? `− ${money(l.price - l.netRate)}` : '—'}</td><td class="num">${money(l.total)}</td>`}</tr>`).join('');
   const status = documentStatus(state).get(inv.id);
   const itemDisc = inv.itemDiscount || 0;
   const billDisc = inv.billDiscount || 0;
@@ -114,7 +114,7 @@ export function invoiceDoc(state, inv, { noRates = false } = {}) {
       <div class="paper-status"><div class="label">Status</div>${status ? `<strong>${esc(status.status)}</strong>` : ''}</div>
     </section>
     <table class="paper-table">
-      <thead><tr><th>#</th><th>Product</th><th>Brand</th><th>Quality</th><th class="num">Qty</th>${noRates ? '' : '<th class="num">Rate</th><th class="num">Discount</th><th class="num">Total</th>'}</tr></thead>
+      <thead><tr><th>#</th><th>Product</th><th>Brand</th><th>Quality</th><th class="num">Qty</th>${noRates ? '' : '<th class="num">Rate</th><th class="num">Disc. / unit</th><th class="num">Total</th>'}</tr></thead>
       <tbody>${rows}</tbody>
     </table>
     ${totals}
